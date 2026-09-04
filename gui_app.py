@@ -126,11 +126,20 @@ class GISApp:
         if not results:
             return
 
+        # Deduplicate based on OBJECTID
+        unique_results = {}
+        for r in results:
+            attrs = r.get('attributes', {})
+            obj_id = attrs.get('OBJECTID')
+            if obj_id not in unique_results:
+                unique_results[obj_id] = attrs
+        
+        attributes_list = list(unique_results.values())
+
         # Determine labels based on SR
         x_label, y_label = ("Easting", "Northing") if sr == 26918 else ("Longitude", "Latitude")
         
         # Dynamically determine columns based on attribute keys + coords
-        attributes_list = [r.get('attributes', {}) for r in results]
         all_keys = set()
         for attrs in attributes_list:
             all_keys.update(attrs.keys())
@@ -151,7 +160,7 @@ class GISApp:
             row_data.update({x_label: x, y_label: y})
             values = tuple(row_data.get(col, "") for col in columns)
             self.tree.insert("", tk.END, values=values)
-        logger.debug(f"Treeview updated with attributes and {x_label}/{y_label}: {x}, {y}")
+        logger.debug(f"Treeview updated with {len(attributes_list)} unique attributes and {x_label}/{y_label}: {x}, {y}")
 
 if __name__ == "__main__":
     root = tk.Tk()
