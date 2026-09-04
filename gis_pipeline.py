@@ -63,7 +63,8 @@ class PipelineOrchestrator:
         - "x, y" (assumed SR: 26918 - UTM 18N)
         - "lat, lon" (assumed SR: 4326 - WGS84)
         """
-        match = re.search(r"(-?\d+\.?\d*)\s*[, ]\s*(-?\d+\.?\d*)", query)
+        # Improved regex to only match if the string *is* primarily coordinates
+        match = re.fullmatch(r"(-?\d+\.?\d*)\s*[, ]\s*(-?\d+\.?\d*)", query.strip())
         if not match:
             return None
         
@@ -76,9 +77,8 @@ class PipelineOrchestrator:
         
         if abs(v1) <= 180 and abs(v2) <= 180:
             # Assume Lat/Lon (4326)
-            # In a real app, we'd need to project this to 26918.
-            # For now, we flag it as 4326.
-            return {"x": v2, "y": v1}, 4326 # ArcGIS uses lon, lat
+            # ArcGIS uses lon, lat
+            return {"x": v2, "y": v1}, 4326 
         else:
             # Assume Projected (26918)
             return {"x": v1, "y": v2}, 26918

@@ -19,21 +19,27 @@ class GISApp:
         self.root.geometry("640x480")
         self.root.resizable(False, False)
 
+        # Title
+        tk.Label(root, text="Search for Locations or Enter Coordinates", font=("Arial", 12, "bold")).pack(pady=5)
+
         search_frame = tk.Frame(root)
-        search_frame.pack(pady=10, padx=10, fill=tk.X)
+        search_frame.pack(pady=5, padx=10, fill=tk.X)
         
-        tk.Label(search_frame, text="Address:").pack(side=tk.LEFT, padx=5)
+        tk.Label(search_frame, text="Address/Coords:").pack(side=tk.LEFT, padx=5)
         self.address_entry = tk.Entry(search_frame)
         self.address_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         self.address_entry.bind('<Return>', lambda event: self.start_search())
+        self.address_entry.focus_set() # Set initial focus
         
         self.search_button = tk.Button(search_frame, text="Search", command=self.start_search)
         self.search_button.pack(side=tk.LEFT, padx=5)
         
+        tk.Label(root, text="Select Suggestion:").pack(pady=(10, 0), padx=10, anchor=tk.W)
         self.suggestion_listbox = tk.Listbox(root, height=5)
         self.suggestion_listbox.pack(pady=5, padx=10, fill=tk.X)
         self.suggestion_listbox.bind('<<ListboxSelect>>', self.on_select)
         
+        tk.Label(root, text="Reference Marker Details:").pack(pady=(10, 0), padx=10, anchor=tk.W)
         # Treeview for table display
         self.tree = ttk.Treeview(root, show="headings")
         self.tree.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
@@ -109,19 +115,26 @@ class GISApp:
         
         # Get location from stored point
         point = fs['point']
-        lat = point.get('y')
-        lon = point.get('x')
+        x = point.get('x')
+        y = point.get('y')
+        # Ensure we have the correct SR for the point
+        # For address suggestions, they usually return projected coords
+        # If the point object doesn't have SR, default to 26918
+        sr = point.get('spatialReference', {}).get('wkid', 26918)
         
         results = fs['results'].get('results', [])
         if not results:
             return
 
-        # Dynamically determine columns based on attribute keys + lat/lon
+        # Determine labels based on SR
+        x_label, y_label = ("Easting", "Northing") if sr == 26918 else ("Longitude", "Latitude")
+        
+        # Dynamically determine columns based on attribute keys + coords
         attributes_list = [r.get('attributes', {}) for r in results]
         all_keys = set()
         for attrs in attributes_list:
             all_keys.update(attrs.keys())
-        all_keys.update(['Latitude', 'Longitude'])
+        all_keys.update([x_label, y_label])
         
         columns = sorted(list(all_keys))
         
@@ -132,13 +145,13 @@ class GISApp:
             self.tree.heading(col, text=col)
             self.tree.column(col, width=100)
             
-        # Insert new results with Lat/Long added
+        # Insert new results with coords added
         for attrs in attributes_list:
             row_data = attrs.copy()
-            row_data.update({'Latitude': lat, 'Longitude': lon})
+            row_data.update({x_label: x, y_label: y})
             values = tuple(row_data.get(col, "") for col in columns)
             self.tree.insert("", tk.END, values=values)
-        logger.debug(f"Treeview updated with attributes and Lat/Long: {lat}, {lon}")
+        logger.debug(f"Treeview updated with attributes and {x_label}/{y_label}: {x}, {y}")
 
 if __name__ == "__main__":
     root = tk.Tk()
