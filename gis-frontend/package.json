@@ -2,6 +2,7 @@
   "name": "gis-frontend",
   "version": "1.0.0",
   "main": "main.js",
+  "repository": "gis-proj/gis-proj",
   "scripts": {
     "start": "electron .",
     "dev": "concurrently \"uvicorn main:app --app-dir ..\" \"electron .\""
