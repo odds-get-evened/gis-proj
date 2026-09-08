@@ -1,8 +1,13 @@
 {
-  "name": "gis-frontend",
+  "name": "nys-gis-frontend",
+  "description": "NYS GIS Reference Marker GUI",
   "version": "1.0.0",
   "main": "main.js",
   "repository": "gis-proj/gis-proj",
+  "author": {
+    "name": "Christopher Walsh",
+    "email": "christopher.walsh@its.ny.gov"
+  },
   "scripts": {
     "start": "electron .",
     "dev": "concurrently \"uvicorn main:app --app-dir ..\" \"electron .\""
