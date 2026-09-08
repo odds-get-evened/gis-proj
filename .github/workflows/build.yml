@@ -1,0 +1,56 @@
+name: build and release NYS GIS app
+
+on:
+  push:
+    tags:
+      # triggers the build automatically when you push a version tag
+      - 'v*'
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
+
+permissions:
+  contents: write # Grants permission to create and publish releases
+
+jobs:
+  release:
+    name: Build Installer on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install fastapi uvicorn requests pydantic pyinstaller
+
+      - name: Compile Python Backend
+        run: |
+          pyinstaller --onedir --clean --name=gis-backend main.py
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: gis-frontend/package.json
+
+      - name: Install Node.js Dependencies
+        run: |
+          cd gis-frontend
+          npm install
+
+      - name: Build and Publish Electron App
+        uses: samuelmeuli/action-electron-builder@v1
+        with:
+          directory: gis-frontend
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          release: ${{ startsWith(github.ref, 'refs/tags/v') }}
