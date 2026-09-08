@@ -51,6 +51,6 @@ jobs:
       - name: Build and Publish Electron App
         uses: samuelmeuli/action-electron-builder@v1
         with:
-          directory: gis-frontend
+          package_root: gis-frontend
           github_token: ${{ secrets.GITHUB_TOKEN }}
           release: ${{ startsWith(github.ref, 'refs/tags/v') }}
