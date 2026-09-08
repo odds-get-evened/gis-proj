@@ -3,6 +3,8 @@
 This tool provides a user-friendly interface for querying NYSDOT reference markers based on locations. It is available in two distinct architectures: a modern, interactive **Electron + FastAPI Dashboard**, and a legacy standalone **Tkinter Widget**.
 
 ---
+![App screenshot](screenshot.png)
+---
 
 ## Architectural Options
 
