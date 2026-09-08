@@ -3,3 +3,5 @@
 GEMINI.md
 .idea
 *__pycache__*
+*node_modules*
+*-lock.json

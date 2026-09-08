@@ -1,6 +1,6 @@
-import tkinter as tk
-import threading
 import logging
+import threading
+import tkinter as tk
 from tkinter import messagebox, ttk
 from gis_pipeline import PipelineOrchestrator
 
@@ -69,7 +69,8 @@ class GISApp:
 
     def search_coordinates(self, coord_point_sr):
         point, sr = coord_point_sr
-        results = self.orchestrator.marker_service.identify(point, sr)
+        # Default radius 0.5 miles for now
+        results = self.orchestrator.marker_service.identify(point, sr, radius_miles=0.5)
         logger.debug(f"Identify result for coordinates: {results}")
         
         # Store as single item
@@ -89,7 +90,8 @@ class GISApp:
             if candidate:
                 point = candidate['location']
                 sr = candidate.get('spatialReference', {}).get('wkid')
-                results = self.orchestrator.marker_service.identify(point, sr)
+                # Use default radius 0.5 miles for address searches
+                results = self.orchestrator.marker_service.identify(point, sr, radius_miles=0.5)
                 logger.debug(f"Identify result for {s['text']}: {results}")
                 if results.get('results'):
                     self.filtered_suggestions.append({'suggestion': s, 'results': results, 'point': point})

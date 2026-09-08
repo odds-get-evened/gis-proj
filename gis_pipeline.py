@@ -15,33 +15,40 @@ class GeocoderService(ArcGISClient):
     SUGGEST_URL = "https://nysgeohub.ny.gov/arcgis/rest/services/Geocoder/NYS_Geocoder/GeocodeServer/suggest"
     FIND_URL = "https://nysgeohub.ny.gov/arcgis/rest/services/Geocoder/NYS_Geocoder/GeocodeServer/findAddressCandidates"
 
-    def suggest(self, text: str) -> List[Dict]:
+    def suggest(self, text: str, max_suggestions: int = 50) -> List[Dict]:
         """Gets location suggestions for a given text."""
-        params = {"text": text}
+        params = {"text": text, "maxSuggestions": max_suggestions}
         data = self._make_request(self.SUGGEST_URL, params)
         return data.get("suggestions", [])
 
-    def geocode(self, magic_key: str) -> Dict:
+    def geocode(self, magic_key: str, out_sr: int = 3857) -> Dict:
         """Geocodes a specific suggestion using its magicKey."""
-        params = {"magicKey": magic_key}
+        params = {"magicKey": magic_key, "outSR": out_sr}
         data = self._make_request(self.FIND_URL, params)
         candidates = data.get("candidates", [])
-        return candidates[0] if candidates else {}
+        if candidates:
+            candidate = candidates[0]
+            # Inject top-level spatialReference into the candidate object
+            candidate["spatialReference"] = data.get("spatialReference")
+            return candidate
+        return {}
 
 class ReferenceMarkerService(ArcGISClient):
     """Handles reference marker identification."""
     IDENTIFY_URL = "https://gis.dot.ny.gov/hostingny/rest/services/Ref_Marker/MapServer/identify"
 
-    def identify(self, point: Dict, sr: int) -> Dict:
-        """Identifies reference markers near a given point."""
-        buffer = 1000
+    def identify(self, point: Dict, sr: int, radius_miles: float = 0.5, out_sr: int = 3857) -> Dict:
+        """Identifies reference markers near a given point within a radius in miles."""
+        # Convert miles to meters (approx) for buffer
+        buffer = radius_miles * 1609.34
         map_extent = f"{point['x']-buffer},{point['y']-buffer},{point['x']+buffer},{point['y']+buffer}"
         
         params = {
             "geometryType": "esriGeometryPoint",
             "geometry": f"{point['x']},{point['y']}",
             "sr": sr,
-            "tolerance": 10,
+            "outSR": out_sr, # Request geometries in Web Mercator
+            "tolerance": buffer, # Use buffer as tolerance as well
             "mapExtent": map_extent,
             "imageDisplay": "800,600,96",
             "returnGeometry": "true",
@@ -93,7 +100,7 @@ class PipelineOrchestrator:
             point, sr = coord_point_sr
             print(f"Detected coordinates: {point}, SR: {sr}")
             # Identify
-            return self.marker_service.identify(point, sr)
+            return self.marker_service.identify(point, sr, radius_miles=0.5)
 
         # 2. Suggest
         suggestions = self.geocoder.suggest(query)
@@ -121,4 +128,4 @@ class PipelineOrchestrator:
         print(f"Geocoded: {point}")
 
         # 4. Identify
-        return self.marker_service.identify(point, sr)
+        return self.marker_service.identify(point, sr, radius_miles=0.5)

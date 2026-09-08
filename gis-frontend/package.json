@@ -1,0 +1,13 @@
+{
+  "name": "gis-frontend",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "concurrently \"uvicorn main:app --app-dir ..\" \"electron .\""
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "electron": "^44.2.0"
+  }
+}
