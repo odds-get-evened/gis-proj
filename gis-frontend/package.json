@@ -11,5 +11,27 @@
     "concurrently": "^10.0.5",
     "electron": "^44.2.0",
     "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.nysdot.gislookup",
+    "productName": "NYS GIS Lookup",
+    "directories": {
+      "output": "dist-installer"
+    },
+    "extraResources": [
+      {
+        "from": "../dist/gis-backend",
+        "to": "bin/gis-backend"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    }
   }
 }
