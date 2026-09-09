@@ -3,6 +3,10 @@
   "description": "NYS GIS Reference Marker GUI",
   "version": "1.0.0",
   "main": "main.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gis-proj/gis-proj.git"
+  },
   "author": {
     "name": "Christopher Walsh",
     "email": "christopher.walsh@its.ny.gov"
