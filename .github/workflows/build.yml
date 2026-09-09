@@ -49,8 +49,13 @@ jobs:
           npm install
 
       - name: Build and Publish Electron App
-        uses: samuelmeuli/action-electron-builder@v1
-        with:
-          package_root: gis-frontend
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          release: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd gis-frontend
+          if [ "${{ startsWith(github.ref, 'refs/tags/v') }}" = "true" ]; then
+            npx electron-builder --publish always
+          else
+            npx electron-builder --publish never
+          fi
