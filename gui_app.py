@@ -137,6 +137,15 @@ class GISApp:
                 unique_results[obj_id] = attrs
         
         attributes_list = list(unique_results.values())
+        
+        # Fields to filter out as they are always null
+        fields_to_ignore = ['reverse overlap feature', 'continuity code', 'route sequence number']
+
+        # Filter out ignored fields and log attributes for analysis
+        for attrs in attributes_list:
+            logger.debug(f"Attribute fields: {list(attrs.keys())}")
+            for field in fields_to_ignore:
+                attrs.pop(field, None)
 
         # Determine labels based on SR
         x_label, y_label = ("Easting", "Northing") if sr == 26918 else ("Longitude", "Latitude")

@@ -748,8 +748,13 @@
             // Extract the 'attributes' child object from each item for the table rows
             const tableRows = data.map(item => item.attributes);
 
+            // Fields to filter out as they are always null
+            const fieldsToIgnore = ['reverse overlap feature', 'continuity code', 'route sequence number'];
+
             // Headers
-            const cols = Object.keys(tableRows[0]);
+            const allCols = Object.keys(tableRows[0]);
+            const cols = allCols.filter(col => !fieldsToIgnore.includes(col));
+            
             cols.forEach(col => {
                 const th = document.createElement('th');
                 th.innerText = col;

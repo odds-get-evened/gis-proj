@@ -5,6 +5,11 @@ from gis_pipeline import PipelineOrchestrator
 from typing import Optional, Dict
 import os
 import signal
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 

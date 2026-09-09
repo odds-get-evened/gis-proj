@@ -1,11 +1,15 @@
 import requests
 import re
+import logging
 from typing import List, Dict, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 class ArcGISClient:
     """Base client for interacting with ArcGIS REST services."""
     def _make_request(self, url: str, params: Dict) -> Dict:
         params["f"] = "json"
+        logger.info(f"Outgoing Request URL: {url} | Params: {params}")
         response = requests.get(url, params=params)
         response.raise_for_status()
         return response.json()
