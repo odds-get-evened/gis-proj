@@ -20,8 +20,12 @@ class GeocoderService(ArcGISClient):
     FIND_URL = "https://nysgeohub.ny.gov/arcgis/rest/services/Geocoder/NYS_Geocoder/GeocodeServer/findAddressCandidates"
 
     def suggest(self, text: str, max_suggestions: int = 50) -> List[Dict]:
-        """Gets location suggestions for a given text."""
-        params = {"text": text, "maxSuggestions": max_suggestions}
+        """Gets location suggestions for a given text, filtered to streets, intersections, cities, and counties."""
+        params = {
+            "text": text,
+            "maxSuggestions": max_suggestions,
+            "category": "Street Name,Intersection,City,Subregion"
+        }
         data = self._make_request(self.SUGGEST_URL, params)
         return data.get("suggestions", [])
 
