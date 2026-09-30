@@ -156,6 +156,28 @@
             border-bottom: 1px solid var(--border);
             cursor: default;
         }
+        .suggestion-body {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+        .suggestion-text strong {
+            font-weight: 700;
+            color: var(--text-main);
+        }
+        .suggestion-context {
+            font-size: 0.76rem;
+            line-height: 1.3;
+            color: var(--text-muted);
+        }
+        .suggestion-context:empty:not(.loading) {
+            display: none; /* nothing to add for this suggestion */
+        }
+        .suggestion-context.loading {
+            min-height: 1.3em; /* same as one line of details, so the list doesn't jump when they arrive */
+        }
+
         .suggestion-show-more {
             list-style: none;
             font-size: 0.8rem;
@@ -547,6 +569,14 @@
                 return response.json();
             }
 
+            /** Resolves with [{magic_key, found, city, county, location, spatial_reference}]. */
+            async suggestionDetails(suggestions) {
+                const response = await this.postJson('/suggestion-details', {
+                    suggestions: suggestions.map(s => ({ text: s.text, magic_key: s.magicKey }))
+                });
+                return response.json();
+            }
+
             async geocode(magicKey) {
                 const response = await this.postJson('/geocode', { magic_key: magicKey });
                 return response.json();
@@ -565,6 +595,10 @@
         const api = new BackendApi('http://127.0.0.1:8000');
 
         let currentSuggestions = [];
+        let suggestionDetails = [];     // details per suggestion index, once looked up
+        let suggestionContextEls = [];  // the second line of each suggestion, filled in with its details
+        let suggestionListId = 0;       // bumped per list, so late answers for an old list are ignored
+        const DETAILS_BATCH_SIZE = 25;  // server limit per request
         let mapView, graphicsLayer, mapGraphic;
 
         // Initialize ArcGIS JS Map
@@ -759,7 +793,7 @@
                     await showCoordinateResult(result);
                     return;
                 }
-                renderSuggestionGroups(result.groups);
+                renderSuggestionGroups(result.groups, address);
             } catch (error) {
                 console.error('Error:', error);
                 alert(error.message);
@@ -777,8 +811,9 @@
             'Subregion': '🗺️'
         };
 
-        // One clickable suggestion line: icon plus the place's text
-        function createSuggestionItem(suggestion, category) {
+        // One clickable suggestion: icon, the place's text with the typed words in bold,
+        // and a second line that shows the town/county once they're looked up
+        function createSuggestionItem(suggestion, category, query) {
             const index = currentSuggestions.push(suggestion) - 1;
             const item = document.createElement('li');
             item.className = 'suggestion-item';
@@ -786,12 +821,79 @@
             const icon = document.createElement('span');
             icon.className = 'suggestion-icon';
             icon.textContent = SUGGESTION_ICONS[category] || '🔍';
-            const text = document.createElement('span');
-            text.textContent = suggestion.text; // text, never HTML
 
-            item.append(icon, text);
+            const body = document.createElement('span');
+            body.className = 'suggestion-body';
+            const text = document.createElement('span');
+            text.className = 'suggestion-text';
+            appendHighlighted(text, suggestion.text, query);
+            const context = document.createElement('span');
+            context.className = 'suggestion-context loading';
+            body.append(text, context);
+            suggestionContextEls[index] = context;
+
+            item.append(icon, body);
             item.onclick = () => selectSuggestion(index);
-            return item;
+            return { item, index };
+        }
+
+        // Adds text to parent, wrapping the parts that match the typed words in <strong>.
+        // Builds DOM nodes rather than HTML, so the text is never interpreted as markup.
+        function appendHighlighted(parent, text, query) {
+            const words = (query || '').toLowerCase().split(/[\s,]+/).filter(w => w.length >= 2);
+            const lower = text.toLowerCase();
+            const bold = new Array(text.length).fill(false);
+            words.forEach(word => {
+                for (let at = lower.indexOf(word); at !== -1; at = lower.indexOf(word, at + 1)) {
+                    bold.fill(true, at, at + word.length);
+                }
+            });
+            let start = 0;
+            for (let i = 1; i <= text.length; i++) {
+                if (i === text.length || bold[i] !== bold[start]) {
+                    const piece = text.slice(start, i);
+                    if (bold[start]) {
+                        const strong = document.createElement('strong');
+                        strong.textContent = piece;
+                        parent.appendChild(strong);
+                    } else {
+                        parent.appendChild(document.createTextNode(piece));
+                    }
+                    start = i;
+                }
+            }
+        }
+
+        // Looks up town/county for the given suggestions and fills in their second line.
+        // Runs after the list is shown; answers for a list that's been replaced are ignored.
+        async function loadSuggestionDetails(indices) {
+            const listId = suggestionListId;
+            for (let i = 0; i < indices.length; i += DETAILS_BATCH_SIZE) {
+                const batch = indices.slice(i, i + DETAILS_BATCH_SIZE);
+                let details = [];
+                try {
+                    details = await api.suggestionDetails(batch.map(index => currentSuggestions[index]));
+                } catch (error) {
+                    console.warn('Could not load suggestion details:', error.message);
+                }
+                if (listId !== suggestionListId) return; // a newer search replaced this list
+                batch.forEach((index, position) => showSuggestionContext(index, details[position]));
+            }
+        }
+
+        // Fills in "Town · County" under a suggestion, leaving out what its text already says
+        function showSuggestionContext(index, details) {
+            const context = suggestionContextEls[index];
+            if (!context) return;
+            context.classList.remove('loading');
+            if (!details || !details.found) return;
+            suggestionDetails[index] = details;
+
+            const text = currentSuggestions[index].text.toLowerCase();
+            const parts = [];
+            if (details.city && !text.includes(details.city.toLowerCase())) parts.push(details.city);
+            if (details.county && !text.includes(details.county.toLowerCase())) parts.push(details.county);
+            context.textContent = parts.join(' · ');
         }
 
         // How many suggestions each group shows before "Show more"
@@ -799,11 +901,15 @@
 
         // Shows suggestions under a heading per kind of place (addresses, intersections, ...).
         // Each group shows its best few matches, with a link to reveal the rest.
-        function renderSuggestionGroups(groups) {
+        function renderSuggestionGroups(groups, query) {
             const list = document.getElementById('suggestions');
             const title = document.getElementById('suggestionsTitle');
             list.innerHTML = '';
             currentSuggestions = [];
+            suggestionDetails = [];
+            suggestionContextEls = [];
+            suggestionListId++;
+            const visibleIndices = [];
 
             if (groups.length > 0) {
                 title.textContent = 'Search Suggestions';
@@ -815,11 +921,15 @@
                     list.appendChild(header);
 
                     const hiddenItems = [];
+                    const hiddenIndices = [];
                     group.suggestions.forEach((suggestion, position) => {
-                        const item = createSuggestionItem(suggestion, group.category);
+                        const { item, index } = createSuggestionItem(suggestion, group.category, query);
                         if (position >= SUGGESTIONS_SHOWN_PER_GROUP) {
                             item.hidden = true;
                             hiddenItems.push(item);
+                            hiddenIndices.push(index);
+                        } else {
+                            visibleIndices.push(index);
                         }
                         list.appendChild(item);
                     });
@@ -831,10 +941,12 @@
                         more.onclick = () => {
                             hiddenItems.forEach(item => { item.hidden = false; });
                             more.remove();
+                            loadSuggestionDetails(hiddenIndices);
                         };
                         list.appendChild(more);
                     }
                 });
+                loadSuggestionDetails(visibleIndices);
             } else {
                 title.style.display = 'none';
                 list.innerHTML = '<div style="padding: 10px; font-size: 0.9rem; color: var(--text-muted);">No suggestions found.</div>';
@@ -847,8 +959,11 @@
             const radius = 0.5; // default
             
             try {
-                // Geocode
-                const candidate = await api.geocode(suggestion.magicKey);
+                // Use the location from the details lookup if it has arrived; otherwise geocode now
+                const details = suggestionDetails[index];
+                const candidate = details && details.location
+                    ? { location: details.location, spatialReference: details.spatial_reference }
+                    : await api.geocode(suggestion.magicKey);
 
                 if (!candidate || !candidate.location || !candidate.spatialReference) {
                     throw new Error('That location could not be found on the map. Please pick another suggestion.');

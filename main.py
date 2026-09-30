@@ -3,13 +3,13 @@ import logging
 import sys
 import threading
 from dataclasses import asdict
-from typing import Dict
+from typing import Dict, List
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from gis_pipeline import ArcGISError, CoordinateError, PipelineOrchestrator
 
@@ -95,6 +95,13 @@ class BackendServer:
 class GeocodeRequest(BaseModel):
     magic_key: str
 
+class SuggestionRef(BaseModel):
+    text: str
+    magic_key: str
+
+class SuggestionDetailsRequest(BaseModel):
+    suggestions: List[SuggestionRef] = Field(..., max_length=25)
+
 class IdentifyRequest(BaseModel):
     point: Dict[str, float]
     sr: int
@@ -128,6 +135,16 @@ def search(text: str):
         }
     groups = orchestrator.geocoder.suggest_grouped(text)
     return {"type": "suggestions", "groups": [asdict(group) for group in groups]}
+
+@app.post("/suggestion-details")
+def suggestion_details(request: SuggestionDetailsRequest):
+    """Town, county and location for up to 25 suggestions, looked up in parallel.
+
+    The frontend calls this after showing the suggestion list, and fills in each
+    line as the answer arrives. Lookups that fail come back with found=false.
+    """
+    details = orchestrator.geocoder.suggestion_details([s.model_dump() for s in request.suggestions])
+    return [asdict(d) for d in details]
 
 @app.get("/suggestions")
 def get_suggestions(text: str):

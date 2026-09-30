@@ -66,7 +66,7 @@ The app shows the NYSDOT reference markers within **half a mile** of any locatio
    - 🏘️ **Towns & Cities**
    - 🗺️ **Counties**
 
-   Each group shows its three best matches first; click **Show more** under a group to see the rest. A place is only listed once, in its most specific group.
+   Each group shows its three best matches first; click **Show more** under a group to see the rest. A place is only listed once, in its most specific group. The words you typed are shown in **bold**, and a moment after the list appears each suggestion gains a second line with its town and county (for example *Ulster County*), so similar-sounding places are easy to tell apart.
 
 ### Search by coordinates
 Type two numbers into the same search box and press **Enter**. The markers appear right away, with no suggestion list. These formats are recognized:

@@ -116,6 +116,17 @@ class SuggestionGroup:
     suggestions: List[Dict] = field(default_factory=list)
 
 
+@dataclass
+class SuggestionDetails:
+    """Where a suggestion is, looked up after the suggestion list is shown."""
+    magic_key: str
+    found: bool = False
+    city: str = ""
+    county: str = ""                     # e.g. "Ulster County"
+    location: Optional[Dict[str, float]] = None
+    spatial_reference: Optional[Dict] = None
+
+
 class GeocoderService(ArcGISClient):
     """Handles location suggestions and geocoding."""
     SERVICE_NAME = "NYS address lookup service"
@@ -184,6 +195,56 @@ class GeocoderService(ArcGISClient):
             if unique:
                 groups.append(SuggestionGroup(category, label, unique))
         return groups
+
+    MAX_DETAILS_PER_REQUEST = 25
+    DETAIL_LOOKUP_WORKERS = 10
+
+    def suggestion_details(self, suggestions: List[Dict], out_sr: int = 3857) -> List[SuggestionDetails]:
+        """Looks up the town, county and location of each suggestion, in parallel.
+
+        suggestions: [{"text": ..., "magic_key": ...}] as returned by suggest.
+        Details are a nice-to-have shown after the list appears, so a lookup that
+        fails just comes back with found=False instead of raising.
+        """
+        def lookup(suggestion):
+            magic_key = suggestion["magic_key"]
+            try:
+                # Esri recommends sending both the suggestion text and its magicKey
+                data = self._make_request(self.FIND_URL, {
+                    "SingleLine": suggestion["text"],
+                    "magicKey": magic_key,
+                    "outFields": "City,Subregion",
+                    "maxLocations": 1,
+                    "outSR": out_sr,
+                })
+            except ArcGISError as error:
+                logger.warning(f"Details lookup failed for {suggestion['text']!r}: {error}")
+                return SuggestionDetails(magic_key)
+            candidates = data.get("candidates", [])
+            if not candidates:
+                return SuggestionDetails(magic_key)
+            attributes = candidates[0].get("attributes", {})
+            return SuggestionDetails(
+                magic_key=magic_key,
+                found=True,
+                city=(attributes.get("City") or "").strip(),
+                county=self._county_name(attributes.get("Subregion")),
+                location=candidates[0].get("location"),
+                spatial_reference=data.get("spatialReference"),
+            )
+
+        if not suggestions:
+            return []
+        with ThreadPoolExecutor(max_workers=min(len(suggestions), self.DETAIL_LOOKUP_WORKERS)) as pool:
+            return list(pool.map(lookup, suggestions))
+
+    @staticmethod
+    def _county_name(subregion: Optional[str]) -> str:
+        """The geocoder gives the county as a bare name ("Ulster"); show it as "Ulster County"."""
+        name = (subregion or "").strip()
+        if not name:
+            return ""
+        return name if name.lower().endswith("county") else f"{name} County"
 
     def geocode(self, magic_key: str, out_sr: int = 3857) -> Dict:
         """Geocodes a specific suggestion using its magicKey."""
