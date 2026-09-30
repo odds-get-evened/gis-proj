@@ -59,11 +59,14 @@ The app shows the NYSDOT reference markers within **half a mile** of any locatio
 ### Search by address or place
 1. Type an address, road, intersection, city or county into the search box, for example `5700 Route 44 55, Kerhonkson, NY`.
 2. Press **Enter** or click **Search**.
-3. Click the matching entry in the **Search Suggestions** list. Suggestions are grouped by kind of place, each with its own icon:
+3. Click the matching entry in the **Search Suggestions** list. Suggestions are grouped by kind of place, each with its own icon, from most to least specific:
+   - 🏠 **Addresses**
    - 🚦 **Intersections**
    - 🛣️ **Roads**
    - 🏘️ **Towns & Cities**
    - 🗺️ **Counties**
+
+   Each group shows its three best matches first; click **Show more** under a group to see the rest. A place is only listed once, in its most specific group.
 
 ### Search by coordinates
 Type two numbers into the same search box and press **Enter**. The markers appear right away, with no suggestion list. These formats are recognized:

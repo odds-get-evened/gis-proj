@@ -115,7 +115,7 @@ def search(text: str):
 
     Anything else is treated as a place name and comes back as
     {"type": "suggestions", "groups": [{"category", "label", "suggestions": [...]}, ...]},
-    grouped by kind of place (intersections, roads, towns & cities, counties).
+    grouped by kind of place (addresses, intersections, roads, towns & cities, counties).
     """
     coordinates = orchestrator.coordinate_parser.parse(text)
     if coordinates:

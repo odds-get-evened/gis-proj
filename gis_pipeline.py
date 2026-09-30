@@ -120,9 +120,11 @@ class GeocoderService(ArcGISClient):
     """Handles location suggestions and geocoding."""
     SERVICE_NAME = "NYS address lookup service"
 
-    # Kinds of place offered as suggestions, in the order their groups are shown:
-    # (geocoder category, heading shown to the user)
+    # Kinds of place offered as suggestions, in the order their groups are shown
+    # (most specific first): (geocoder category, heading shown to the user).
+    # A category the geocoder doesn't support simply returns no group.
     SUGGESTION_CATEGORIES = (
+        ("Address", "Addresses"),
         ("Intersection", "Intersections"),
         ("Street Name", "Roads"),
         ("City", "Towns & Cities"),
@@ -146,7 +148,10 @@ class GeocoderService(ArcGISClient):
         """Gets suggestions for text grouped by kind of place, in SUGGESTION_CATEGORIES order.
 
         The geocoder doesn't say which category a suggestion belongs to, so each
-        category is requested separately (in parallel). Empty groups are left out.
+        category is requested separately (in parallel). Within each group the
+        geocoder's relevance order is kept. A place that appears in more than one
+        category is shown once, in the first (most specific) group. Empty groups
+        are left out.
         If some categories fail, the others are still returned; if all fail, the
         first failure is raised, preferring a timeout.
         """
@@ -167,11 +172,18 @@ class GeocoderService(ArcGISClient):
             timeouts = [e for e in errors if isinstance(e, ArcGISTimeoutError)]
             raise (timeouts or errors)[0]
 
-        return [
-            SuggestionGroup(category, label, suggestions)
-            for (category, label), (suggestions, _) in zip(self.SUGGESTION_CATEGORIES, outcomes)
-            if suggestions
-        ]
+        groups = []
+        seen = set()
+        for (category, label), (suggestions, _) in zip(self.SUGGESTION_CATEGORIES, outcomes):
+            unique = []
+            for suggestion in suggestions or []:
+                key = " ".join(suggestion.get("text", "").lower().split())
+                if key and key not in seen:
+                    seen.add(key)
+                    unique.append(suggestion)
+            if unique:
+                groups.append(SuggestionGroup(category, label, unique))
+        return groups
 
     def geocode(self, magic_key: str, out_sr: int = 3857) -> Dict:
         """Geocodes a specific suggestion using its magicKey."""

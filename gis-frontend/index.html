@@ -156,6 +156,21 @@
             border-bottom: 1px solid var(--border);
             cursor: default;
         }
+        .suggestion-show-more {
+            list-style: none;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--primary);
+            padding: 2px 4px 4px;
+            cursor: pointer;
+        }
+        .suggestion-show-more:hover {
+            text-decoration: underline;
+        }
+        .suggestion-item[hidden] {
+            display: none;
+        }
+
         .suggestion-group-header:first-child {
             padding-top: 0;
         }
@@ -755,13 +770,35 @@
 
         // Icon shown beside each kind of place in the suggestion list
         const SUGGESTION_ICONS = {
+            'Address': '🏠',
             'Intersection': '🚦',
             'Street Name': '🛣️',
             'City': '🏘️',
             'Subregion': '🗺️'
         };
 
-        // Shows suggestions under a heading per kind of place (intersections, roads, ...)
+        // One clickable suggestion line: icon plus the place's text
+        function createSuggestionItem(suggestion, category) {
+            const index = currentSuggestions.push(suggestion) - 1;
+            const item = document.createElement('li');
+            item.className = 'suggestion-item';
+
+            const icon = document.createElement('span');
+            icon.className = 'suggestion-icon';
+            icon.textContent = SUGGESTION_ICONS[category] || '🔍';
+            const text = document.createElement('span');
+            text.textContent = suggestion.text; // text, never HTML
+
+            item.append(icon, text);
+            item.onclick = () => selectSuggestion(index);
+            return item;
+        }
+
+        // How many suggestions each group shows before "Show more"
+        const SUGGESTIONS_SHOWN_PER_GROUP = 3;
+
+        // Shows suggestions under a heading per kind of place (addresses, intersections, ...).
+        // Each group shows its best few matches, with a link to reveal the rest.
         function renderSuggestionGroups(groups) {
             const list = document.getElementById('suggestions');
             const title = document.getElementById('suggestionsTitle');
@@ -777,21 +814,26 @@
                     header.textContent = group.label;
                     list.appendChild(header);
 
-                    group.suggestions.forEach(suggestion => {
-                        const index = currentSuggestions.push(suggestion) - 1;
-                        const item = document.createElement('li');
-                        item.className = 'suggestion-item';
-
-                        const icon = document.createElement('span');
-                        icon.className = 'suggestion-icon';
-                        icon.textContent = SUGGESTION_ICONS[group.category] || '🔍';
-                        const text = document.createElement('span');
-                        text.textContent = suggestion.text; // text, never HTML
-
-                        item.append(icon, text);
-                        item.onclick = () => selectSuggestion(index);
+                    const hiddenItems = [];
+                    group.suggestions.forEach((suggestion, position) => {
+                        const item = createSuggestionItem(suggestion, group.category);
+                        if (position >= SUGGESTIONS_SHOWN_PER_GROUP) {
+                            item.hidden = true;
+                            hiddenItems.push(item);
+                        }
                         list.appendChild(item);
                     });
+
+                    if (hiddenItems.length > 0) {
+                        const more = document.createElement('li');
+                        more.className = 'suggestion-show-more';
+                        more.textContent = `Show ${hiddenItems.length} more ${group.label.toLowerCase()}`;
+                        more.onclick = () => {
+                            hiddenItems.forEach(item => { item.hidden = false; });
+                            more.remove();
+                        };
+                        list.appendChild(more);
+                    }
                 });
             } else {
                 title.style.display = 'none';
