@@ -178,6 +178,23 @@
             min-height: 1.3em; /* same as one line of details, so the list doesn't jump when they arrive */
         }
 
+        .suggestion-item.active {
+            border-color: var(--primary);
+            background-color: #EEF2FF;
+            box-shadow: 0 0 0 1px var(--primary);
+            transition: none; /* the keyboard highlight appears instantly */
+        }
+        .suggestion-show-more.active {
+            text-decoration: underline;
+            background-color: #EEF2FF;
+            border-radius: 4px;
+        }
+        .suggestion-message {
+            padding: 10px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
         .suggestion-show-more {
             list-style: none;
             font-size: 0.8rem;
@@ -448,7 +465,8 @@
 
         <div class="search-container">
             <div class="input-group">
-                <input type="text" id="address" placeholder="Enter Address, Route or Coords..." onkeydown="if(event.key==='Enter') search()">
+                <input type="text" id="address" placeholder="Enter Address, Route or Coords..." autocomplete="off"
+                       role="combobox" aria-autocomplete="list" aria-controls="suggestions" aria-expanded="false">
                 <button onclick="search()">Search</button>
             </div>
             <div id="loader" class="loader"></div>
@@ -456,7 +474,7 @@
 
         <div class="suggestions-container">
             <div class="suggestions-header" id="suggestionsTitle" style="display: none;">Search Suggestions</div>
-            <ul id="suggestions" class="suggestion-list"></ul>
+            <ul id="suggestions" class="suggestion-list" role="listbox" aria-label="Search suggestions"></ul>
         </div>
     </div>
 
@@ -599,6 +617,8 @@
         let suggestionContextEls = [];  // the second line of each suggestion, filled in with its details
         let suggestionListId = 0;       // bumped per list, so late answers for an old list are ignored
         const DETAILS_BATCH_SIZE = 25;  // server limit per request
+        const DETAILS_SETTLE_MS = 400;  // wait this long after a list appears before looking up details
+        const detailsCache = new Map(); // magicKey -> details, so a place is only looked up once
         let mapView, graphicsLayer, mapGraphic;
 
         // Initialize ArcGIS JS Map
@@ -782,24 +802,9 @@
             renderTable(markers, isPartial);
         }
 
-        async function search() {
-            const address = document.getElementById('address').value;
-            if (!address) return;
-
-            showLoading(true);
-            try {
-                const result = await api.search(address);
-                if (result.type === 'coordinates') {
-                    await showCoordinateResult(result);
-                    return;
-                }
-                renderSuggestionGroups(result.groups, address);
-            } catch (error) {
-                console.error('Error:', error);
-                alert(error.message);
-            } finally {
-                showLoading(false);
-            }
+        // The Search button (and Enter with nothing highlighted) search right away
+        function search() {
+            searchBox.searchNow();
         }
 
         // Icon shown beside each kind of place in the suggestion list
@@ -817,6 +822,8 @@
             const index = currentSuggestions.push(suggestion) - 1;
             const item = document.createElement('li');
             item.className = 'suggestion-item';
+            item.id = `suggestion-option-${index}`;
+            item.setAttribute('role', 'option');
 
             const icon = document.createElement('span');
             icon.className = 'suggestion-icon';
@@ -868,8 +875,22 @@
         // Runs after the list is shown; answers for a list that's been replaced are ignored.
         async function loadSuggestionDetails(indices) {
             const listId = suggestionListId;
-            for (let i = 0; i < indices.length; i += DETAILS_BATCH_SIZE) {
-                const batch = indices.slice(i, i + DETAILS_BATCH_SIZE);
+
+            // Already-known places are filled in straight away
+            const needed = [];
+            indices.forEach(index => {
+                const cached = detailsCache.get(currentSuggestions[index].magicKey);
+                if (cached) showSuggestionContext(index, cached);
+                else needed.push(index);
+            });
+            if (needed.length === 0) return;
+
+            // While typing, the list is replaced often; only look up a list that stays put
+            await new Promise(resolve => setTimeout(resolve, DETAILS_SETTLE_MS));
+            if (listId !== suggestionListId) return;
+
+            for (let i = 0; i < needed.length; i += DETAILS_BATCH_SIZE) {
+                const batch = needed.slice(i, i + DETAILS_BATCH_SIZE);
                 let details = [];
                 try {
                     details = await api.suggestionDetails(batch.map(index => currentSuggestions[index]));
@@ -877,7 +898,11 @@
                     console.warn('Could not load suggestion details:', error.message);
                 }
                 if (listId !== suggestionListId) return; // a newer search replaced this list
-                batch.forEach((index, position) => showSuggestionContext(index, details[position]));
+                batch.forEach((index, position) => {
+                    const found = details[position];
+                    if (found && found.found) detailsCache.set(found.magic_key, found);
+                    showSuggestionContext(index, found);
+                });
             }
         }
 
@@ -937,6 +962,8 @@
                     if (hiddenItems.length > 0) {
                         const more = document.createElement('li');
                         more.className = 'suggestion-show-more';
+                        more.id = `suggestion-more-${group.category.replace(/\W/g, '')}`;
+                        more.setAttribute('role', 'option');
                         more.textContent = `Show ${hiddenItems.length} more ${group.label.toLowerCase()}`;
                         more.onclick = () => {
                             hiddenItems.forEach(item => { item.hidden = false; });
@@ -1120,6 +1147,188 @@
 
             modal.style.display = 'flex';
         }
+
+        // Shown while typing when the text is coordinates: picking it shows the markers there.
+        // (Markers aren't searched automatically, so half-typed numbers never trigger a search.)
+        function renderCoordinatePreview(result) {
+            const list = document.getElementById('suggestions');
+            const title = document.getElementById('suggestionsTitle');
+            list.innerHTML = '';
+            currentSuggestions = [];
+            suggestionListId++;
+            title.textContent = 'Coordinates';
+            title.style.display = 'block';
+
+            const item = document.createElement('li');
+            item.className = 'suggestion-item';
+            item.id = 'suggestion-option-coordinates';
+            item.setAttribute('role', 'option');
+            const icon = document.createElement('span');
+            icon.className = 'suggestion-icon';
+            icon.textContent = '📍';
+            const body = document.createElement('span');
+            body.className = 'suggestion-body';
+            const text = document.createElement('span');
+            text.className = 'suggestion-text';
+            text.textContent = result.description;
+            const hint = document.createElement('span');
+            hint.className = 'suggestion-context';
+            hint.textContent = 'Press Enter or click to show markers here';
+            body.append(text, hint);
+            item.append(icon, body);
+            item.onclick = async () => {
+                showLoading(true);
+                try {
+                    await showCoordinateResult(result);
+                } catch (error) {
+                    alert(error.message);
+                } finally {
+                    showLoading(false);
+                }
+            };
+            list.appendChild(item);
+        }
+
+        // A short note in place of the suggestion list (e.g. a problem found while typing)
+        function showSuggestionMessage(message) {
+            const list = document.getElementById('suggestions');
+            document.getElementById('suggestionsTitle').style.display = 'none';
+            currentSuggestions = [];
+            suggestionListId++;
+            list.innerHTML = '';
+            const note = document.createElement('div');
+            note.className = 'suggestion-message';
+            note.textContent = message;
+            list.appendChild(note);
+        }
+
+        function clearSuggestions() {
+            document.getElementById('suggestions').innerHTML = '';
+            document.getElementById('suggestionsTitle').style.display = 'none';
+            currentSuggestions = [];
+            suggestionListId++;
+        }
+
+        /**
+         * The search box: suggests places as you type, and lets you move through the
+         * suggestions with the arrow keys and pick one with Enter.
+         */
+        class SearchBox {
+            static TYPING_PAUSE_MS = 300; // suggest once typing pauses this long
+            static MIN_CHARACTERS = 3;
+
+            constructor(input, list) {
+                this.input = input;
+                this.list = list;
+                this.typingTimer = null;
+                this.requestId = 0;     // only the newest request's answer is shown
+                this.activeIndex = -1;  // highlighted option; -1 means none
+                input.addEventListener('input', () => this.onInput());
+                input.addEventListener('keydown', event => this.onKeyDown(event));
+            }
+
+            onInput() {
+                clearTimeout(this.typingTimer);
+                const text = this.input.value.trim();
+                if (text.length < SearchBox.MIN_CHARACTERS) {
+                    this.requestId++; // drop any answer still on its way
+                    clearSuggestions();
+                    this.resetHighlight();
+                    return;
+                }
+                this.typingTimer = setTimeout(() => this.lookup(text, false), SearchBox.TYPING_PAUSE_MS);
+            }
+
+            searchNow() {
+                clearTimeout(this.typingTimer);
+                const text = this.input.value.trim();
+                if (text) this.lookup(text, true);
+            }
+
+            // explicit: the user pressed Enter/Search (coordinates go straight to the
+            // markers, and problems are shown as alerts) rather than just typing
+            async lookup(text, explicit) {
+                const requestId = ++this.requestId;
+                if (explicit) showLoading(true);
+                try {
+                    const result = await api.search(text);
+                    if (requestId !== this.requestId) return; // a newer request replaced this one
+                    if (result.type === 'coordinates') {
+                        if (explicit) await showCoordinateResult(result);
+                        else renderCoordinatePreview(result);
+                    } else {
+                        renderSuggestionGroups(result.groups, text);
+                    }
+                    this.resetHighlight();
+                } catch (error) {
+                    if (requestId !== this.requestId) return;
+                    console.error('Error:', error);
+                    if (explicit) alert(error.message);
+                    else showSuggestionMessage(error.message);
+                } finally {
+                    if (explicit) showLoading(false);
+                }
+            }
+
+            onKeyDown(event) {
+                switch (event.key) {
+                    case 'ArrowDown':
+                        event.preventDefault();
+                        this.moveHighlight(+1);
+                        break;
+                    case 'ArrowUp':
+                        event.preventDefault();
+                        this.moveHighlight(-1);
+                        break;
+                    case 'Enter': {
+                        event.preventDefault();
+                        const option = this.options[this.activeIndex];
+                        if (option) option.click(); // pick the highlighted suggestion (or Show more)
+                        else this.searchNow();
+                        this.updateHighlight();
+                        break;
+                    }
+                    case 'Escape':
+                        this.resetHighlight();
+                        break;
+                }
+            }
+
+            // Visible, pickable rows: suggestions and "Show more" links (not headings)
+            get options() {
+                return [...this.list.querySelectorAll('.suggestion-item:not([hidden]), .suggestion-show-more')];
+            }
+
+            moveHighlight(step) {
+                const count = this.options.length;
+                if (count === 0) return;
+                // Up from the first option goes back to the text box (no highlight)
+                this.activeIndex = Math.max(-1, Math.min(count - 1, this.activeIndex + step));
+                this.updateHighlight();
+            }
+
+            resetHighlight() {
+                this.activeIndex = -1;
+                this.updateHighlight();
+            }
+
+            updateHighlight() {
+                const options = this.options;
+                if (this.activeIndex >= options.length) this.activeIndex = options.length - 1;
+                options.forEach((option, i) => {
+                    const active = i === this.activeIndex;
+                    option.classList.toggle('active', active);
+                    option.setAttribute('aria-selected', active ? 'true' : 'false');
+                    if (active) option.scrollIntoView({ block: 'nearest' });
+                });
+                const active = options[this.activeIndex];
+                if (active) this.input.setAttribute('aria-activedescendant', active.id);
+                else this.input.removeAttribute('aria-activedescendant');
+                this.input.setAttribute('aria-expanded', options.length > 0 ? 'true' : 'false');
+            }
+        }
+
+        const searchBox = new SearchBox(document.getElementById('address'), document.getElementById('suggestions'));
 
         function closeModal() {
             document.getElementById('detailsModal').style.display = 'none';

@@ -57,9 +57,12 @@ An internet connection is required, because the app looks up addresses and refer
 The app shows the NYSDOT reference markers within **half a mile** of any location in New York State. There are three ways to pick a location.
 
 ### Search by address or place
-1. Type an address, road, intersection, city or county into the search box, for example `5700 Route 44 55, Kerhonkson, NY`.
-2. Press **Enter** or click **Search**.
-3. Click the matching entry in the **Search Suggestions** list. Suggestions are grouped by kind of place, each with its own icon, from most to least specific:
+1. Start typing an address, road, intersection, city or county into the search box, for example `5700 Route 44 55, Kerhonkson, NY`. Suggestions appear as soon as you pause (after at least three characters); you can also press **Enter** or click **Search** to look right away.
+2. Pick the matching entry in the **Search Suggestions** list by clicking it, or with the keyboard:
+   - **↓ / ↑** move through the suggestions (including the **Show more** links)
+   - **Enter** picks the highlighted suggestion (with nothing highlighted, it searches immediately)
+   - **Esc** clears the highlight
+3. Suggestions are grouped by kind of place, each with its own icon, from most to least specific:
    - 🏠 **Addresses**
    - 🚦 **Intersections**
    - 🛣️ **Roads**
@@ -69,7 +72,7 @@ The app shows the NYSDOT reference markers within **half a mile** of any locatio
    Each group shows its three best matches first; click **Show more** under a group to see the rest. A place is only listed once, in its most specific group. The words you typed are shown in **bold**, and a moment after the list appears each suggestion gains a second line with its town and county (for example *Ulster County*), so similar-sounding places are easy to tell apart.
 
 ### Search by coordinates
-Type two numbers into the same search box and press **Enter**. The markers appear right away, with no suggestion list. These formats are recognized:
+Type two numbers into the same search box and press **Enter**; the markers appear right away. While you're still typing, the list shows how your coordinates will be read, and no search runs until you press **Enter** or click that entry. These formats are recognized:
 
 | Format | Example |
 | --- | --- |
