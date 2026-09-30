@@ -1,18 +1,32 @@
-import requests
-import re
 import logging
-from typing import List, Dict, Optional, Tuple
+import re
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, List, Optional, Tuple
+
+import requests
 
 logger = logging.getLogger(__name__)
 
+
+class ArcGISError(Exception):
+    """Raised when an ArcGIS REST service reports an error in its response body."""
+
+
 class ArcGISClient:
     """Base client for interacting with ArcGIS REST services."""
+    TIMEOUT_SECONDS = 15
+
     def _make_request(self, url: str, params: Dict) -> Dict:
-        params["f"] = "json"
+        params = {**params, "f": "json"}
         logger.info(f"Outgoing Request URL: {url} | Params: {params}")
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=self.TIMEOUT_SECONDS)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        # ArcGIS reports most failures as HTTP 200 with an "error" object in the body
+        if "error" in data:
+            error = data["error"]
+            raise ArcGISError(f"{url} returned error {error.get('code')}: {error.get('message')}")
+        return data
 
 class GeocoderService(ArcGISClient):
     """Handles location suggestions and geocoding."""
@@ -42,27 +56,66 @@ class GeocoderService(ArcGISClient):
         return {}
 
 class ReferenceMarkerService(ArcGISClient):
-    """Handles reference marker identification."""
-    IDENTIFY_URL = "https://gis.dot.ny.gov/hostingny/rest/services/Ref_Marker/MapServer/identify"
+    """Finds NYSDOT reference markers within a true ground distance of a point."""
+    MAPSERVER_URL = "https://gis.dot.ny.gov/hostingny/rest/services/Ref_Marker/MapServer"
 
-    def identify(self, point: Dict, sr: int, radius_miles: float = 0.5, out_sr: int = 3857) -> Dict:
-        """Identifies reference markers near a given point within a radius in miles."""
-        # Convert miles to meters (approx) for buffer
-        buffer = radius_miles * 1609.34
-        map_extent = f"{point['x']-buffer},{point['y']-buffer},{point['x']+buffer},{point['y']+buffer}"
-        
+    # The service draws the same marker feature class in nine sub-layers, one per map
+    # scale (1:60,000 down to 1:4,000). All are queried so no marker is missed, and
+    # duplicates are removed by OBJECTID.
+    LAYER_IDS = (1, 2, 3, 4, 5, 6, 7, 8, 9)
+
+    def find_nearby(self, point: Dict, sr: int, radius_miles: float = 0.5, out_sr: int = 3857) -> List[Dict]:
+        """
+        Returns the unique reference markers within radius_miles of point.
+
+        The server buffers the point by a real distance in miles in the layer's own
+        projected coordinate system (UTM 18N, meters), so the search area is a true
+        circle whatever spatial reference the input point uses (lat/lon, UTM or Web Mercator).
+
+        Each result is {"attributes": {...}, "geometry": {..., "spatialReference": {...}}},
+        with attributes keyed by their display names (e.g. "Reference Marker Number").
+        """
+        with ThreadPoolExecutor(max_workers=len(self.LAYER_IDS)) as pool:
+            layer_results = pool.map(
+                lambda layer_id: self._query_layer(layer_id, point, sr, radius_miles, out_sr),
+                self.LAYER_IDS,
+            )
+
+        unique_markers: Dict[int, Dict] = {}
+        for markers in layer_results:
+            for marker in markers:
+                unique_markers.setdefault(marker["attributes"].get("OBJECTID"), marker)
+        return list(unique_markers.values())
+
+    def _query_layer(self, layer_id: int, point: Dict, sr: int, radius_miles: float, out_sr: int) -> List[Dict]:
+        """Runs a distance query against one sub-layer and normalizes its features."""
         params = {
-            "geometryType": "esriGeometryPoint",
             "geometry": f"{point['x']},{point['y']}",
-            "sr": sr,
-            "outSR": out_sr, # Request geometries in Web Mercator
-            "tolerance": buffer, # Use buffer as tolerance as well
-            "mapExtent": map_extent,
-            "imageDisplay": "800,600,96",
+            "geometryType": "esriGeometryPoint",
+            "inSR": sr,
+            "spatialRel": "esriSpatialRelIntersects",
+            "distance": radius_miles,
+            "units": "esriSRUnit_StatuteMile",
+            "outFields": "*",
             "returnGeometry": "true",
-            "layers": "all"
+            "outSR": out_sr,
         }
-        return self._make_request(self.IDENTIFY_URL, params)
+        data = self._make_request(f"{self.MAPSERVER_URL}/{layer_id}/query", params)
+        if data.get("exceededTransferLimit"):
+            logger.warning(f"Layer {layer_id} returned more markers than the server limit; results are truncated")
+
+        aliases = data.get("fieldAliases", {})
+        spatial_reference = data.get("spatialReference", {"wkid": out_sr})
+        markers = []
+        for feature in data.get("features", []):
+            attributes = {aliases.get(name, name): value for name, value in feature.get("attributes", {}).items()}
+            geometry = feature.get("geometry")
+            if geometry is not None:
+                # Query results carry the spatial reference once for the whole response;
+                # attach it to each geometry so the map can place the marker on its own.
+                geometry = {**geometry, "spatialReference": spatial_reference}
+            markers.append({"attributes": attributes, "geometry": geometry})
+        return markers
 
 class PipelineOrchestrator:
     """Orchestrates the GIS pipeline workflow."""
@@ -98,7 +151,7 @@ class PipelineOrchestrator:
             # Assume Projected (26918)
             return {"x": v1, "y": v2}, 26918
 
-    def run(self, query: str, choice_index: Optional[int] = None) -> Optional[Dict]:
+    def run(self, query: str, choice_index: Optional[int] = None) -> Optional[List[Dict]]:
         """
         Runs the full GIS pipeline for a given query (address or coordinates).
         """
@@ -107,8 +160,7 @@ class PipelineOrchestrator:
         if coord_point_sr:
             point, sr = coord_point_sr
             print(f"Detected coordinates: {point}, SR: {sr}")
-            # Identify
-            return self.marker_service.identify(point, sr, radius_miles=0.5)
+            return self.marker_service.find_nearby(point, sr, radius_miles=0.5)
 
         # 2. Suggest
         suggestions = self.geocoder.suggest(query)
@@ -135,5 +187,5 @@ class PipelineOrchestrator:
         sr = candidate.get('spatialReference', {}).get('wkid')
         print(f"Geocoded: {point}")
 
-        # 4. Identify
-        return self.marker_service.identify(point, sr, radius_miles=0.5)
+        # 4. Find nearby reference markers
+        return self.marker_service.find_nearby(point, sr, radius_miles=0.5)

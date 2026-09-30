@@ -15,6 +15,7 @@ A decoupled, web-native desktop app. A Python FastAPI backend handles the GIS lo
 
 ## Features
 - **Interactive ArcGIS Map:** Embedded, fully interactive vector map pane displaying search targets and results.
+- **Half-Mile Search Radius:** Searching an address or clicking the map shows every reference marker within 0.5 miles of that spot.
 - **Bi-Directional Highlight & Sync:**
   - Clicking any reference marker pin (Emerald Green) on the map instantly highlights and **smoothly scrolls to its matching row** in the details table.
   - Clicking any row in the details table automatically **pans and focuses the map** on that specific marker pin.
@@ -80,11 +81,20 @@ npm run dev
 The backend pipes queries through the core orchestrator engine in `gis_pipeline.py` using one of two workflows:
 
 1.  **Address Flow:** 
-    - Input (Address) -> Suggest (Geocoder) -> Geocode (Geocoder) -> Identify (MapServer).
+    - Input (Address) -> Suggest (Geocoder) -> Geocode (Geocoder) -> Find Nearby Markers (MapServer query).
 2.  **Coordinate Flow:** 
-    - Input (Coordinates) -> Identify (MapServer).
+    - Input (Coordinates) -> Find Nearby Markers (MapServer query).
+
+Markers are found with a distance query: the NYSDOT service buffers the location by a true 0.5-mile radius in its own UTM 18N (meter) coordinate system, so the search area is an accurate circle whether the location arrives as lat/lon, UTM or Web Mercator. The service draws the same markers in nine scale-dependent sub-layers; all are queried in parallel and duplicates are removed by `OBJECTID`.
 
 ### Native API Endpoints Queried:
 - **Geocoder Suggestions:** `https://nysgeohub.ny.gov/arcgis/rest/services/Geocoder/NYS_Geocoder/GeocodeServer/suggest`
 - **Geocoder Candidates:** `https://nysgeohub.ny.gov/arcgis/rest/services/Geocoder/NYS_Geocoder/GeocodeServer/findAddressCandidates`
-- **Reference Marker Identification:** `https://gis.dot.ny.gov/hostingny/rest/services/Ref_Marker/MapServer/identify`
+- **Reference Marker Query:** `https://gis.dot.ny.gov/hostingny/rest/services/Ref_Marker/MapServer/<layer 1-9>/query`
+
+### Running the Tests
+From the root project directory:
+```bash
+pip install httpx
+python -m unittest discover -s tests -t . -v
+```

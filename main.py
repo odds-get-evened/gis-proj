@@ -78,20 +78,8 @@ def geocode_location(request: GeocodeRequest):
 
 @app.post("/identify")
 def identify_marker(request: IdentifyRequest):
-    results = orchestrator.marker_service.identify(request.point, request.sr, request.radius_miles)
-    
-    # Deduplicate based on OBJECTID and keep both attributes and geometry
-    unique_results = {}
-    for r in results.get('results', []):
-        attrs = r.get('attributes', {})
-        obj_id = attrs.get('OBJECTID')
-        if obj_id not in unique_results:
-            unique_results[obj_id] = {
-                "attributes": attrs,
-                "geometry": r.get('geometry')
-            }
-            
-    return list(unique_results.values())
+    """Returns the unique reference markers within radius_miles of the point."""
+    return orchestrator.marker_service.find_nearby(request.point, request.sr, request.radius_miles)
 
 @app.post("/shutdown")
 def shutdown():
