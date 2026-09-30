@@ -5,3 +5,7 @@ GEMINI.md
 *__pycache__*
 *node_modules*
 *-lock.json
+build
+dist
+*.spec
+dist-installer

@@ -1,15 +1,22 @@
+import logging
+import os
+import signal
+from typing import Dict, Optional
+
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
 from gis_pipeline import PipelineOrchestrator
-from typing import Optional, Dict
-import os
-import signal
-import logging
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Must match the address the Electron frontend (main.js and index.html) talks to
+HOST = "127.0.0.1"
+PORT = 8000
 
 app = FastAPI()
 
@@ -23,6 +30,31 @@ app.add_middleware(
 
 orchestrator = PipelineOrchestrator()
 
+
+class BackendServer:
+    """Runs the FastAPI app in-process with uvicorn and supports a clean programmatic stop.
+
+    Used when the backend is started directly (``python main.py``) or as the
+    PyInstaller-compiled ``gis-backend`` executable bundled with the installers.
+    """
+
+    def __init__(self, application: FastAPI, host: str = HOST, port: int = PORT):
+        config = uvicorn.Config(application, host=host, port=port, log_level="info")
+        self._server = uvicorn.Server(config)
+
+    def run(self) -> None:
+        """Blocks, serving requests until stop() is called or the process is interrupted."""
+        logger.info(f"Starting GIS backend on http://{HOST}:{PORT}")
+        self._server.run()
+
+    def stop(self) -> None:
+        """Asks uvicorn to finish in-flight requests and exit."""
+        self._server.should_exit = True
+
+
+# Set only when this module is run as the entry point (see bottom of file)
+backend_server: Optional[BackendServer] = None
+
 class GeocodeRequest(BaseModel):
     magic_key: str
 
@@ -30,6 +62,11 @@ class IdentifyRequest(BaseModel):
     point: Dict[str, float]
     sr: int
     radius_miles: float = 0.5
+
+@app.get("/health")
+def health():
+    """Readiness probe polled by the Electron app before it opens its window."""
+    return {"status": "ok"}
 
 @app.get("/suggestions")
 def get_suggestions(text: str):
@@ -58,6 +95,14 @@ def identify_marker(request: IdentifyRequest):
 
 @app.post("/shutdown")
 def shutdown():
-    # Send SIGINT to self to trigger graceful uvicorn shutdown
-    os.kill(os.getpid(), signal.SIGINT)
+    if backend_server is not None:
+        backend_server.stop()
+    else:
+        # Started by the uvicorn CLI (npm run dev): SIGINT triggers uvicorn's graceful shutdown
+        os.kill(os.getpid(), signal.SIGINT)
     return {"status": "shutting down"}
+
+
+if __name__ == "__main__":
+    backend_server = BackendServer(app)
+    backend_server.run()

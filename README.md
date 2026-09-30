@@ -24,7 +24,30 @@ A decoupled, web-native desktop app. A Python FastAPI backend handles the GIS lo
 
 ---
 
-## How to Set Up & Use
+## Installing the App
+
+1. Go to the repository's **Releases** page on GitHub and open the latest release.
+2. Download the installer for your computer:
+   - **Windows:** the `.exe` file. Run it and follow the prompts.
+   - **macOS:** the `.dmg` file. Open it and drag **NYS GIS Lookup** into Applications.
+   - **Linux:** the `.AppImage` (make it executable, then run it) or the `.deb` (install with `sudo apt install ./<file>.deb`).
+3. Launch **NYS GIS Lookup**. It may take a few seconds to open while its lookup service starts in the background.
+
+An internet connection is required, because the app looks up addresses and reference markers from New York State's online GIS services.
+
+**macOS note:** the app isn't signed with an Apple developer certificate yet, so macOS may block it the first time. Right-click the app in Applications, choose **Open**, then confirm **Open**.
+
+### Troubleshooting
+
+- **"NYS GIS Lookup could not start":** the background lookup service failed to start. The message shows the location of `backend.log`, which records what went wrong. The most common cause is another program already using port 8000; close it and try again.
+- **Log file locations:**
+  - Windows: `%APPDATA%\nys-gis-frontend\logs\backend.log`
+  - macOS: `~/Library/Logs/nys-gis-frontend/backend.log`
+  - Linux: `~/.config/nys-gis-frontend/logs/backend.log`
+
+---
+
+## Running from Source (Developers)
 
 ### Prerequisites
 - **Python 3.12+**
