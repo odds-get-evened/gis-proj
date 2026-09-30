@@ -52,6 +52,37 @@ An internet connection is required, because the app looks up addresses and refer
 
 ---
 
+## Using the App
+
+The app shows the NYSDOT reference markers within **half a mile** of any location in New York State. There are three ways to pick a location.
+
+### Search by address or place
+1. Type an address, road, intersection, city or county into the search box, for example `5700 Route 44 55, Kerhonkson, NY`.
+2. Press **Enter** or click **Search**.
+3. Click the matching entry in the **Search Suggestions** list.
+
+### Search by coordinates
+Type two numbers into the same search box and press **Enter**. The markers appear right away, with no suggestion list. These formats are recognized:
+
+| Format | Example |
+| --- | --- |
+| Latitude, longitude (decimal degrees) | `41.7, -74.3` |
+| Longitude, latitude | `-74.3, 41.7` |
+| UTM zone 18N easting, northing (meters) | `560638, 4621699` |
+| UTM zone 18N northing, easting | `4621699, 560638` |
+
+The numbers can be separated by a comma, a semicolon or spaces, and degree signs (`°`) are fine. The app works out which number is which from New York's location, and shows how it read your input under **Coordinates** in the sidebar, so you can confirm it. A longitude typed without its minus sign (`41.7, 74.3`) is read as west longitude, since all of New York is west of Greenwich. Coordinates outside New York are rejected with a message explaining what to enter.
+
+### Click the map
+Click anywhere on the map to see the markers around that spot.
+
+### Reading the results
+- The **red pin** marks your search location, and **green pins** are the reference markers found.
+- Clicking a green pin highlights its row in the **Reference Marker Details** table; clicking a row moves the map to its pin.
+- Click **Details** on any row to see every field for that marker.
+
+---
+
 ## Running from Source (Developers)
 
 ### Prerequisites
@@ -97,7 +128,9 @@ The backend pipes queries through the core orchestrator engine in `gis_pipeline.
 1.  **Address Flow:** 
     - Input (Address) -> Suggest (Geocoder) -> Geocode (Geocoder) -> Find Nearby Markers (MapServer query).
 2.  **Coordinate Flow:** 
-    - Input (Coordinates) -> Find Nearby Markers (MapServer query).
+    - Input (Coordinates) -> Parse & Validate (`CoordinateParser`) -> Find Nearby Markers (MapServer query).
+
+The search box calls the backend's `/search` endpoint, which returns either parsed coordinates or address suggestions, so both kinds of input share one box.
 
 Markers are found with a distance query: the NYSDOT service buffers the location by a true 0.5-mile radius in its own UTM 18N (meter) coordinate system, so the search area is an accurate circle whether the location arrives as lat/lon, UTM or Web Mercator. The service draws the same markers in nine scale-dependent sub-layers; all are queried in parallel and duplicates are removed by `OBJECTID`.
 

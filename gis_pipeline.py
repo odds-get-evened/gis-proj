@@ -221,50 +221,115 @@ class ReferenceMarkerService(ArcGISClient):
             markers.append({"attributes": attributes, "geometry": geometry})
         return markers
 
+class CoordinateError(ValueError):
+    """Raised when text is clearly coordinates but can't be used (e.g. outside New York)."""
+
+    def __init__(self, user_message: str):
+        super().__init__(user_message)
+        self.user_message = user_message
+
+
+@dataclass
+class ParsedCoordinates:
+    """A location typed as coordinates, ready for a marker search."""
+    point: Dict[str, float]  # {"x": ..., "y": ...} in the spatial reference below
+    sr: int                  # 4326 (lat/lon) or 26918 (UTM zone 18N)
+    description: str         # how the input was read, e.g. "41.7, -74.3 (latitude, longitude)"
+
+
+class CoordinateParser:
+    """Recognizes coordinates typed into the search box.
+
+    Accepts two numbers separated by a comma, semicolon or spaces:
+      - Latitude/longitude in decimal degrees, in either order ("41.7, -74.3" or "-74.3, 41.7").
+        A longitude typed without its minus sign is read as west, since all of New York is.
+      - UTM zone 18N meters (the NYSDOT system), easting/northing in either order
+        ("560638, 4621699").
+
+    Because every marker is in New York, the state's bounds decide which order and
+    system the numbers are in. Anything that isn't two numbers (or mixes a small and a
+    large number, like "5700 44") is not treated as coordinates, so it falls through to
+    the address search.
+    """
+    LAT_RANGE = (40.0, 45.5)
+    LON_RANGE = (-80.0, -71.5)
+    UTM_EASTING_RANGE = (100_000, 770_000)
+    UTM_NORTHING_RANGE = (4_480_000, 4_990_000)
+    MAX_DEGREES = 180
+    MIN_UTM_METERS = 1_000
+
+    _NUMBER = r"([+-]?(?:\d+\.?\d*|\.\d+))\s*°?"
+    _PATTERN = re.compile(rf"^\s*{_NUMBER}\s*(?:[,;]\s*|\s+){_NUMBER}\s*$")
+
+    def parse(self, text: str) -> Optional[ParsedCoordinates]:
+        """Returns the coordinates in text, None if text isn't coordinates.
+
+        Raises CoordinateError if text is coordinates but lies outside New York.
+        """
+        match = self._PATTERN.match(text)
+        if not match:
+            return None
+        first, second = float(match.group(1)), float(match.group(2))
+
+        if abs(first) <= self.MAX_DEGREES and abs(second) <= self.MAX_DEGREES:
+            return self._parse_degrees(first, second)
+        if abs(first) >= self.MIN_UTM_METERS and abs(second) >= self.MIN_UTM_METERS:
+            return self._parse_utm(first, second)
+        return None  # e.g. a house number and a route number
+
+    def _parse_degrees(self, first: float, second: float) -> ParsedCoordinates:
+        readings = [
+            (first, second, "latitude, longitude"),
+            (first, -second, "latitude, longitude; read as west longitude"),
+            (second, first, "longitude, latitude"),
+            (second, -first, "longitude, latitude; read as west longitude"),
+        ]
+        for lat, lon, how in readings:
+            if self._within(lat, self.LAT_RANGE) and self._within(lon, self.LON_RANGE):
+                return ParsedCoordinates({"x": lon, "y": lat}, 4326, f"{self._format(lat)}, {self._format(lon)} ({how})")
+        raise CoordinateError(
+            f"{self._format(first)}, {self._format(second)} is outside New York State. "
+            "Enter latitude and longitude in New York, for example 41.7, -74.3."
+        )
+
+    def _parse_utm(self, first: float, second: float) -> ParsedCoordinates:
+        for easting, northing, how in [(first, second, "easting, northing"), (second, first, "northing, easting")]:
+            if self._within(easting, self.UTM_EASTING_RANGE) and self._within(northing, self.UTM_NORTHING_RANGE):
+                return ParsedCoordinates(
+                    {"x": easting, "y": northing}, 26918, f"{self._format(easting)}, {self._format(northing)} (UTM zone 18N, {how})"
+                )
+        raise CoordinateError(
+            f"{self._format(first)}, {self._format(second)} is outside New York State in UTM zone 18N. "
+            "Enter an easting and northing in meters, for example 560638, 4621699."
+        )
+
+    @staticmethod
+    def _format(value: float) -> str:
+        """Plain decimal with up to 6 places, never scientific notation (4621699, not 4.6217e+06)."""
+        return f"{value:.6f}".rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _within(value: float, bounds: Tuple[float, float]) -> bool:
+        return bounds[0] <= value <= bounds[1]
+
+
 class PipelineOrchestrator:
     """Orchestrates the GIS pipeline workflow."""
     def __init__(self):
         """Initializes services."""
         self.geocoder = GeocoderService()
         self.marker_service = ReferenceMarkerService()
-
-    def parse_coordinate_query(self, query: str) -> Optional[Tuple[Dict[str, float], int]]:
-        """
-        Parses a query string into a point (x, y) and SR.
-        Supports:
-        - "x, y" (assumed SR: 26918 - UTM 18N)
-        - "lat, lon" (assumed SR: 4326 - WGS84)
-        """
-        # Improved regex to only match if the string *is* primarily coordinates
-        match = re.fullmatch(r"(-?\d+\.?\d*)\s*[, ]\s*(-?\d+\.?\d*)", query.strip())
-        if not match:
-            return None
-        
-        v1 = float(match.group(1))
-        v2 = float(match.group(2))
-        
-        # Very simple heuristic:
-        # Lat/Lon are small (roughly -90 to 90 for lat, -180 to 180 for lon)
-        # UTM/State Plane are large (hundreds of thousands)
-        
-        if abs(v1) <= 180 and abs(v2) <= 180:
-            # Assume Lat/Lon (4326)
-            # ArcGIS uses lon, lat
-            return {"x": v2, "y": v1}, 4326 
-        else:
-            # Assume Projected (26918)
-            return {"x": v1, "y": v2}, 26918
+        self.coordinate_parser = CoordinateParser()
 
     def run(self, query: str, choice_index: Optional[int] = None) -> Optional[List[Dict]]:
         """
         Runs the full GIS pipeline for a given query (address or coordinates).
         """
         # 1. Check if coordinate
-        coord_point_sr = self.parse_coordinate_query(query)
-        if coord_point_sr:
-            point, sr = coord_point_sr
-            print(f"Detected coordinates: {point}, SR: {sr}")
-            return self.marker_service.find_nearby(point, sr, radius_miles=0.5).markers
+        coordinates = self.coordinate_parser.parse(query)
+        if coordinates:
+            print(f"Detected coordinates: {coordinates.description}")
+            return self.marker_service.find_nearby(coordinates.point, coordinates.sr, radius_miles=0.5).markers
 
         # 2. Suggest
         suggestions = self.geocoder.suggest(query)

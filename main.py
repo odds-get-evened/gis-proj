@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from gis_pipeline import ArcGISError, PipelineOrchestrator
+from gis_pipeline import ArcGISError, CoordinateError, PipelineOrchestrator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -38,6 +38,12 @@ def handle_arcgis_error(request: Request, error: ArcGISError):
     """Turns NYS service failures into a status code and a message the UI can show."""
     logger.error(f"{request.url.path} failed: {error}")
     return JSONResponse(status_code=error.status_code, content={"detail": error.user_message})
+
+
+@app.exception_handler(CoordinateError)
+def handle_coordinate_error(request: Request, error: CoordinateError):
+    """Typed coordinates that can't be used, e.g. outside New York."""
+    return JSONResponse(status_code=422, content={"detail": error.user_message})
 
 
 class BackendServer:
@@ -76,6 +82,24 @@ class IdentifyRequest(BaseModel):
 def health():
     """Readiness probe polled by the Electron app before it opens its window."""
     return {"status": "ok"}
+
+@app.get("/search")
+def search(text: str):
+    """Handles whatever was typed in the search box.
+
+    Coordinates come back as {"type": "coordinates", "point", "sr", "description"},
+    ready for /identify. Anything else is treated as an address and comes back as
+    {"type": "suggestions", "suggestions": [...]}.
+    """
+    coordinates = orchestrator.coordinate_parser.parse(text)
+    if coordinates:
+        return {
+            "type": "coordinates",
+            "point": coordinates.point,
+            "sr": coordinates.sr,
+            "description": coordinates.description,
+        }
+    return {"type": "suggestions", "suggestions": orchestrator.geocoder.suggest(text)}
 
 @app.get("/suggestions")
 def get_suggestions(text: str):
