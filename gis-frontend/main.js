@@ -41,14 +41,6 @@ class BackendClient {
       return false;
     }
   }
-
-  async requestShutdown() {
-    try {
-      await this.request('POST', '/shutdown');
-    } catch {
-      // Backend already gone; nothing to do
-    }
-  }
 }
 
 /**
@@ -56,6 +48,11 @@ class BackendClient {
  * Packaged builds launch the bundled PyInstaller executable. When running from
  * source, it finds a Python interpreter with the backend packages installed and
  * runs main.py with it, so no command needs to be on the PATH.
+ *
+ * The backend is stopped by closing its standard input rather than through an
+ * HTTP endpoint: only this process holds that pipe, so no web page or other
+ * program can shut the backend down. If the app crashes, the operating system
+ * closes the pipe and the backend exits on its own.
  */
 class BackendProcess {
   constructor(client) {
@@ -99,24 +96,25 @@ class BackendProcess {
     fs.mkdirSync(path.dirname(this.logFilePath), { recursive: true });
     const log = fs.openSync(this.logFilePath, 'a');
 
-    this.launch(exe, [], {
+    this.launch(exe, ['--stop-on-stdin-close'], {
       cwd: path.dirname(exe),
-      stdio: ['ignore', log, log],
+      stdio: ['pipe', log, log], // stdin is the lifeline; see stop()
     });
   }
 
   startFromSource() {
     const python = this.findPython();
     console.log(`Starting backend with: ${python} main.py`);
-    this.launch(python, ['main.py'], {
+    this.launch(python, ['main.py', '--stop-on-stdin-close'], {
       cwd: this.sourceRoot,
-      stdio: 'inherit', // backend logs appear in the npm run dev terminal
+      stdio: ['pipe', 'inherit', 'inherit'], // stdin is the lifeline; logs appear in the npm run dev terminal
     });
   }
 
   launch(command, args, options) {
     this.child = spawn(command, args, { ...options, windowsHide: true });
     this.spawned = true;
+    this.child.stdin.on('error', () => {}); // the backend exiting first just closes the pipe
     this.child.on('error', (error) => console.error(`Could not start backend: ${error.message}`));
     this.child.on('exit', (code) => {
       console.log(`Backend exited with code ${code}`);
@@ -182,20 +180,25 @@ class BackendProcess {
     );
   }
 
-  /** Asks the backend to shut down gracefully, and force-kills it if it doesn't. */
+  /**
+   * Stops a backend this app started: closing its stdin tells it to shut down
+   * gracefully, and it is force-killed if it hasn't exited after graceMs.
+   * A backend the developer started themselves is left running.
+   */
   async stop(graceMs = 3000) {
-    await this.client.requestShutdown();
     if (!this.isRunning) return;
 
+    const child = this.child;
     await new Promise((resolve) => {
       const timer = setTimeout(() => {
-        if (this.isRunning) this.child.kill();
+        if (this.isRunning) child.kill();
         resolve();
       }, graceMs);
-      this.child.once('exit', () => {
+      child.once('exit', () => {
         clearTimeout(timer);
         resolve();
       });
+      child.stdin.end();
     });
   }
 }

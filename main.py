@@ -1,7 +1,8 @@
+import argparse
 import logging
-import os
-import signal
-from typing import Dict, Optional
+import sys
+import threading
+from typing import Dict
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
@@ -57,8 +58,17 @@ class BackendServer:
         config = uvicorn.Config(application, host=host, port=port, log_level="info")
         self._server = uvicorn.Server(config)
 
-    def run(self) -> None:
-        """Blocks, serving requests until stop() is called or the process is interrupted."""
+    def run(self, stop_on_stdin_close: bool = False) -> None:
+        """Blocks, serving requests until stop() is called or the process is interrupted.
+
+        With stop_on_stdin_close, the server also stops when standard input reaches
+        end-of-file. The Electron app starts the backend with a stdin pipe and closes
+        it on quit; if Electron crashes, the operating system closes it instead. Only
+        the process that started the backend holds that pipe, so no web page or other
+        program can shut the backend down.
+        """
+        if stop_on_stdin_close:
+            threading.Thread(target=self._stop_when_stdin_closes, name="stdin-watcher", daemon=True).start()
         logger.info(f"Starting GIS backend on http://{HOST}:{PORT}")
         self._server.run()
 
@@ -66,9 +76,20 @@ class BackendServer:
         """Asks uvicorn to finish in-flight requests and exit."""
         self._server.should_exit = True
 
+    def _stop_when_stdin_closes(self) -> None:
+        if sys.stdin is None:
+            logger.warning("No standard input available; the backend will not stop when the app closes")
+            return
+        try:
+            # Blocks until the parent closes the pipe; anything written to it is ignored
+            while sys.stdin.buffer.read(1024):
+                pass
+        except (OSError, ValueError):
+            pass  # a broken pipe means the parent is gone, same as end-of-file
+        logger.info("The app closed the backend's standard input; shutting down")
+        self.stop()
 
-# Set only when this module is run as the entry point (see bottom of file)
-backend_server: Optional[BackendServer] = None
+
 
 class GeocodeRequest(BaseModel):
     magic_key: str
@@ -123,16 +144,16 @@ def identify_marker(request: IdentifyRequest, response: Response):
         response.headers["X-Partial-Results"] = "true"
     return result.markers
 
-@app.post("/shutdown")
-def shutdown():
-    if backend_server is not None:
-        backend_server.stop()
-    else:
-        # Started by the uvicorn CLI (npm run dev): SIGINT triggers uvicorn's graceful shutdown
-        os.kill(os.getpid(), signal.SIGINT)
-    return {"status": "shutting down"}
+def parse_args(argv=None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="NYS GIS Lookup backend")
+    parser.add_argument(
+        "--stop-on-stdin-close",
+        action="store_true",
+        help="exit when standard input is closed (used by the Electron app to stop the backend)",
+    )
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
-    backend_server = BackendServer(app)
-    backend_server.run()
+    args = parse_args()
+    BackendServer(app).run(stop_on_stdin_close=args.stop_on_stdin_close)

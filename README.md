@@ -21,7 +21,7 @@ A decoupled, web-native desktop app. A Python FastAPI backend handles the GIS lo
   - Clicking any row in the details table automatically **pans and focuses the map** on that specific marker pin.
 - **Auto-Zoom to Fit:** The map automatically calculates bounds and adjusts zoom levels so that your search target and all surrounding reference markers are perfectly framed.
 - **Deep Metadata Modal:** Click "Details" on any row to open a blurred overlay modal showing the complete list of attribute fields for that reference marker.
-- **Graceful Clean Shutdown:** Closing the Electron window automatically triggers an API shutdown request to the local FastAPI server, leaving no background Python processes orphaned.
+- **Graceful Clean Shutdown:** Closing the window shuts down the app's background lookup service too, and it also stops on its own if the app ever crashes, so nothing is left running in the background.
 
 ---
 
@@ -118,7 +118,9 @@ $env:GIS_PYTHON = "C:\path\to\python.exe"; npm run dev
 GIS_PYTHON=/path/to/python npm run dev
 ```
 
-You can also run the backend yourself with `python main.py` from the root directory; `npm run dev` detects it and uses it instead of starting its own.
+You can also run the backend yourself with `python main.py` from the root directory; `npm run dev` detects it and uses it instead of starting its own. A backend you started yourself keeps running when you close the window; stop it with **Ctrl+C**.
+
+The backend has no shutdown endpoint. The app starts it with `--stop-on-stdin-close` and stops it by closing its standard input, a pipe only the app holds, so no web page or other program can shut it down. If the app crashes, the operating system closes the pipe and the backend exits on its own.
 
 ---
 
@@ -144,4 +146,9 @@ From the root project directory:
 ```bash
 pip install httpx
 python -m unittest discover -s tests -t . -v
+```
+
+To check a compiled backend's startup and shutdown (the release build does this on every platform):
+```bash
+python scripts/smoke_test_backend.py dist/gis-backend/gis-backend
 ```
