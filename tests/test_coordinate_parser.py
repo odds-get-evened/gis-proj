@@ -97,7 +97,8 @@ class SearchEndpointTests(unittest.TestCase):
 
         body = self.client.get("/search", params={"text": "Route 44"}).json()
 
-        self.assertEqual(body, {"type": "suggestions", "suggestions": [{"text": "Route 44", "magicKey": "k"}]})
+        self.assertEqual(body["type"], "suggestions")
+        self.assertIn({"text": "Route 44", "magicKey": "k"}, body["groups"][0]["suggestions"])
 
     def test_coordinates_outside_new_york_return_422_with_message(self):
         response = self.client.get("/search", params={"text": "10, 20"})

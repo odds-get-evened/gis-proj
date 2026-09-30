@@ -145,6 +145,21 @@
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
         }
 
+        .suggestion-group-header {
+            list-style: none;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-weight: 700;
+            color: var(--primary);
+            padding: 10px 4px 2px;
+            border-bottom: 1px solid var(--border);
+            cursor: default;
+        }
+        .suggestion-group-header:first-child {
+            padding-top: 0;
+        }
+
         .suggestion-icon {
             color: var(--primary);
             font-weight: bold;
@@ -505,7 +520,8 @@
                 });
             }
 
-            /** Resolves with {type: "coordinates", point, sr, description} or {type: "suggestions", suggestions}. */
+            /** Resolves with {type: "coordinates", point, sr, description, display_point}
+             *  or {type: "suggestions", groups: [{category, label, suggestions}]}. */
             async search(text) {
                 const response = await this.request(`/search?text=${encodeURIComponent(text)}`);
                 return response.json();
@@ -728,31 +744,58 @@
                     await showCoordinateResult(result);
                     return;
                 }
-                currentSuggestions = result.suggestions;
-                
-                const list = document.getElementById('suggestions');
-                const title = document.getElementById('suggestionsTitle');
-                list.innerHTML = '';
-                
-                if (currentSuggestions.length > 0) {
-                    title.textContent = 'Search Suggestions';
-                    title.style.display = 'block';
-                    currentSuggestions.forEach((s, index) => {
-                        const li = document.createElement('li');
-                        li.className = 'suggestion-item';
-                        li.innerHTML = `<span class="suggestion-icon">🔍</span> <span>${s.text}</span>`;
-                        li.onclick = () => selectSuggestion(index);
-                        list.appendChild(li);
-                    });
-                } else {
-                    title.style.display = 'none';
-                    list.innerHTML = '<div style="padding: 10px; font-size: 0.9rem; color: var(--text-muted);">No suggestions found.</div>';
-                }
+                renderSuggestionGroups(result.groups);
             } catch (error) {
                 console.error('Error:', error);
                 alert(error.message);
             } finally {
                 showLoading(false);
+            }
+        }
+
+        // Icon shown beside each kind of place in the suggestion list
+        const SUGGESTION_ICONS = {
+            'Intersection': '🚦',
+            'Street Name': '🛣️',
+            'City': '🏘️',
+            'Subregion': '🗺️'
+        };
+
+        // Shows suggestions under a heading per kind of place (intersections, roads, ...)
+        function renderSuggestionGroups(groups) {
+            const list = document.getElementById('suggestions');
+            const title = document.getElementById('suggestionsTitle');
+            list.innerHTML = '';
+            currentSuggestions = [];
+
+            if (groups.length > 0) {
+                title.textContent = 'Search Suggestions';
+                title.style.display = 'block';
+                groups.forEach(group => {
+                    const header = document.createElement('li');
+                    header.className = 'suggestion-group-header';
+                    header.textContent = group.label;
+                    list.appendChild(header);
+
+                    group.suggestions.forEach(suggestion => {
+                        const index = currentSuggestions.push(suggestion) - 1;
+                        const item = document.createElement('li');
+                        item.className = 'suggestion-item';
+
+                        const icon = document.createElement('span');
+                        icon.className = 'suggestion-icon';
+                        icon.textContent = SUGGESTION_ICONS[group.category] || '🔍';
+                        const text = document.createElement('span');
+                        text.textContent = suggestion.text; // text, never HTML
+
+                        item.append(icon, text);
+                        item.onclick = () => selectSuggestion(index);
+                        list.appendChild(item);
+                    });
+                });
+            } else {
+                title.style.display = 'none';
+                list.innerHTML = '<div style="padding: 10px; font-size: 0.9rem; color: var(--text-muted);">No suggestions found.</div>';
             }
         }
 

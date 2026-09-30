@@ -2,6 +2,7 @@ import argparse
 import logging
 import sys
 import threading
+from dataclasses import asdict
 from typing import Dict
 
 import uvicorn
@@ -110,8 +111,11 @@ def search(text: str):
 
     Coordinates come back as {"type": "coordinates", "point", "sr", "description",
     "display_point"}: point/sr are ready for /identify, and display_point is the same
-    location in latitude/longitude (WGS 84) for drawing the pin on the map. Anything else is treated as an address and comes back as
-    {"type": "suggestions", "suggestions": [...]}.
+    location in latitude/longitude (WGS 84) for drawing the pin on the map.
+
+    Anything else is treated as a place name and comes back as
+    {"type": "suggestions", "groups": [{"category", "label", "suggestions": [...]}, ...]},
+    grouped by kind of place (intersections, roads, towns & cities, counties).
     """
     coordinates = orchestrator.coordinate_parser.parse(text)
     if coordinates:
@@ -122,7 +126,8 @@ def search(text: str):
             "description": coordinates.description,
             "display_point": coordinates.display_point,
         }
-    return {"type": "suggestions", "suggestions": orchestrator.geocoder.suggest(text)}
+    groups = orchestrator.geocoder.suggest_grouped(text)
+    return {"type": "suggestions", "groups": [asdict(group) for group in groups]}
 
 @app.get("/suggestions")
 def get_suggestions(text: str):

@@ -108,9 +108,27 @@ class ArcGISClient:
         raise AssertionError("unreachable: the last attempt always returns or raises")
 
 
+@dataclass
+class SuggestionGroup:
+    """Suggestions of one kind of place, shown under their own heading."""
+    category: str       # the geocoder's category name, e.g. "Intersection"
+    label: str          # heading shown to the user, e.g. "Intersections"
+    suggestions: List[Dict] = field(default_factory=list)
+
+
 class GeocoderService(ArcGISClient):
     """Handles location suggestions and geocoding."""
     SERVICE_NAME = "NYS address lookup service"
+
+    # Kinds of place offered as suggestions, in the order their groups are shown:
+    # (geocoder category, heading shown to the user)
+    SUGGESTION_CATEGORIES = (
+        ("Intersection", "Intersections"),
+        ("Street Name", "Roads"),
+        ("City", "Towns & Cities"),
+        ("Subregion", "Counties"),
+    )
+    SUGGESTIONS_PER_CATEGORY = 10
     SUGGEST_URL = "https://nysgeohub.ny.gov/arcgis/rest/services/Geocoder/NYS_Geocoder/GeocodeServer/suggest"
     FIND_URL = "https://nysgeohub.ny.gov/arcgis/rest/services/Geocoder/NYS_Geocoder/GeocodeServer/findAddressCandidates"
 
@@ -123,6 +141,37 @@ class GeocoderService(ArcGISClient):
         }
         data = self._make_request(self.SUGGEST_URL, params)
         return data.get("suggestions", [])
+
+    def suggest_grouped(self, text: str) -> List[SuggestionGroup]:
+        """Gets suggestions for text grouped by kind of place, in SUGGESTION_CATEGORIES order.
+
+        The geocoder doesn't say which category a suggestion belongs to, so each
+        category is requested separately (in parallel). Empty groups are left out.
+        If some categories fail, the others are still returned; if all fail, the
+        first failure is raised, preferring a timeout.
+        """
+        def fetch(category):
+            try:
+                params = {"text": text, "maxSuggestions": self.SUGGESTIONS_PER_CATEGORY, "category": category}
+                return self._make_request(self.SUGGEST_URL, params).get("suggestions", []), None
+            except ArcGISError as error:
+                logger.warning(f"Suggestions for category {category!r} failed: {error}")
+                return None, error
+
+        categories = [category for category, _ in self.SUGGESTION_CATEGORIES]
+        with ThreadPoolExecutor(max_workers=len(categories)) as pool:
+            outcomes = list(pool.map(fetch, categories))
+
+        errors = [error for _, error in outcomes if error is not None]
+        if len(errors) == len(outcomes):
+            timeouts = [e for e in errors if isinstance(e, ArcGISTimeoutError)]
+            raise (timeouts or errors)[0]
+
+        return [
+            SuggestionGroup(category, label, suggestions)
+            for (category, label), (suggestions, _) in zip(self.SUGGESTION_CATEGORIES, outcomes)
+            if suggestions
+        ]
 
     def geocode(self, magic_key: str, out_sr: int = 3857) -> Dict:
         """Geocodes a specific suggestion using its magicKey."""
