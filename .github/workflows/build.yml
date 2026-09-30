@@ -61,6 +61,20 @@ jobs:
           cache: 'npm'
           cache-dependency-path: gis-frontend/package.json
 
+      - name: Set App Version from Tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          # Installer file names and the app's reported version come from package.json,
+          # so stamp it with the release tag (e.g. v0.0.8 -> 0.0.8)
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must look like vMAJOR.MINOR.PATCH (got $GITHUB_REF_NAME)"
+            exit 1
+          fi
+          cd gis-frontend
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
       - name: Install Node.js Dependencies
         run: |
           cd gis-frontend
