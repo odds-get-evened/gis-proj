@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 
+from utm_projection import UTM_ZONE_18N
+
 logger = logging.getLogger(__name__)
 
 
@@ -235,6 +237,7 @@ class ParsedCoordinates:
     point: Dict[str, float]  # {"x": ..., "y": ...} in the spatial reference below
     sr: int                  # 4326 (lat/lon) or 26918 (UTM zone 18N)
     description: str         # how the input was read, e.g. "41.7, -74.3 (latitude, longitude)"
+    display_point: Dict[str, float]  # the same location as {"x": longitude, "y": latitude}, for drawing on the map
 
 
 class CoordinateParser:
@@ -286,7 +289,8 @@ class CoordinateParser:
         ]
         for lat, lon, how in readings:
             if self._within(lat, self.LAT_RANGE) and self._within(lon, self.LON_RANGE):
-                return ParsedCoordinates({"x": lon, "y": lat}, 4326, f"{self._format(lat)}, {self._format(lon)} ({how})")
+                point = {"x": lon, "y": lat}
+                return ParsedCoordinates(point, 4326, f"{self._format(lat)}, {self._format(lon)} ({how})", point)
         raise CoordinateError(
             f"{self._format(first)}, {self._format(second)} is outside New York State. "
             "Enter latitude and longitude in New York, for example 41.7, -74.3."
@@ -295,8 +299,12 @@ class CoordinateParser:
     def _parse_utm(self, first: float, second: float) -> ParsedCoordinates:
         for easting, northing, how in [(first, second, "easting, northing"), (second, first, "northing, easting")]:
             if self._within(easting, self.UTM_EASTING_RANGE) and self._within(northing, self.UTM_NORTHING_RANGE):
+                lat, lon = UTM_ZONE_18N.to_lat_lon(easting, northing)
                 return ParsedCoordinates(
-                    {"x": easting, "y": northing}, 26918, f"{self._format(easting)}, {self._format(northing)} (UTM zone 18N, {how})"
+                    {"x": easting, "y": northing},
+                    26918,
+                    f"{self._format(easting)}, {self._format(northing)} (UTM zone 18N, {how})",
+                    {"x": lon, "y": lat},
                 )
         raise CoordinateError(
             f"{self._format(first)}, {self._format(second)} is outside New York State in UTM zone 18N. "

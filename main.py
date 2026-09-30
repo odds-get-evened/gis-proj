@@ -87,8 +87,9 @@ def health():
 def search(text: str):
     """Handles whatever was typed in the search box.
 
-    Coordinates come back as {"type": "coordinates", "point", "sr", "description"},
-    ready for /identify. Anything else is treated as an address and comes back as
+    Coordinates come back as {"type": "coordinates", "point", "sr", "description",
+    "display_point"}: point/sr are ready for /identify, and display_point is the same
+    location in latitude/longitude (WGS 84) for drawing the pin on the map. Anything else is treated as an address and comes back as
     {"type": "suggestions", "suggestions": [...]}.
     """
     coordinates = orchestrator.coordinate_parser.parse(text)
@@ -98,6 +99,7 @@ def search(text: str):
             "point": coordinates.point,
             "sr": coordinates.sr,
             "description": coordinates.description,
+            "display_point": coordinates.display_point,
         }
     return {"type": "suggestions", "suggestions": orchestrator.geocoder.suggest(text)}
 

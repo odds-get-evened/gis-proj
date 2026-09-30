@@ -231,8 +231,12 @@ class GisLookupApp {
       width: 1000,
       height: 800,
       webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false,
+        // The page is a plain web page: it talks to the backend over HTTP and needs
+        // no Node.js access. Node access also breaks the ArcGIS library's on-demand
+        // module loading ("undefinedModule" errors) and would expose Node to the
+        // remote scripts the map loads.
+        nodeIntegration: false,
+        contextIsolation: true,
       },
     });
     win.loadFile('index.html');

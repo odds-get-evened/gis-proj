@@ -49,6 +49,11 @@ class UtmTests(unittest.TestCase):
         result = self.parser.parse("560638, 4621699")
         self.assertEqual((result.point, result.sr), ({"x": 560638.0, "y": 4621699.0}, 26918))
 
+    def test_utm_includes_latitude_longitude_for_the_map_pin(self):
+        display = self.parser.parse("555782, 4624610").display_point
+        self.assertAlmostEqual(display["y"], 41.771371, places=5)
+        self.assertAlmostEqual(display["x"], -74.328847, places=5)
+
     def test_northing_then_easting_is_not_swapped_wrongly(self):
         result = self.parser.parse("4621699, 560638")
         self.assertEqual(result.point, {"x": 560638.0, "y": 4621699.0})
@@ -83,6 +88,7 @@ class SearchEndpointTests(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["type"], "coordinates")
         self.assertEqual((body["point"], body["sr"]), ({"x": -74.3, "y": 41.7}, 4326))
+        self.assertEqual(body["display_point"], {"x": -74.3, "y": 41.7})
         mock_get.assert_not_called()
 
     @patch("gis_pipeline.requests.Session.get")

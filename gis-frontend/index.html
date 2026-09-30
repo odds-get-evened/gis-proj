@@ -534,20 +534,15 @@
         const api = new BackendApi('http://127.0.0.1:8000');
 
         let currentSuggestions = [];
-        let mapView, graphicsLayer, mapGraphic, MapPoint, geometryProjection;
+        let mapView, graphicsLayer, mapGraphic;
 
         // Initialize ArcGIS JS Map
         require([
             "esri/Map",
             "esri/views/MapView",
             "esri/Graphic",
-            "esri/layers/GraphicsLayer",
-            "esri/geometry/Point",
-            "esri/geometry/projection"
-        ], function(Map, MapView, Graphic, GraphicsLayer, Point, projection) {
-            MapPoint = Point;
-            geometryProjection = projection;
-
+            "esri/layers/GraphicsLayer"
+        ], function(Map, MapView, Graphic, GraphicsLayer) {
             const map = new Map({ basemap: "streets-vector" });
             mapView = new MapView({
                 container: "viewDiv",
@@ -684,17 +679,6 @@
             document.getElementById('loader').style.display = show ? 'block' : 'none';
         }
 
-        // Converts a point in any spatial reference into one the map can draw.
-        // Lat/lon and Web Mercator draw directly; UTM is projected in the browser.
-        async function toMapGeometry(x, y, wkid) {
-            const point = new MapPoint({ x, y, spatialReference: { wkid } });
-            if (point.spatialReference.isWGS84 || point.spatialReference.isWebMercator) {
-                return point;
-            }
-            await geometryProjection.load();
-            return geometryProjection.project(point, mapView.spatialReference);
-        }
-
         // Shows markers around coordinates typed into the search box
         async function showCoordinateResult(result) {
             // Replace the suggestion list with how the coordinates were read,
@@ -712,7 +696,13 @@
 
             graphicsLayer.removeAll();
             const targetPin = new mapGraphic({
-                geometry: await toMapGeometry(result.point.x, result.point.y, result.sr),
+                // display_point is always latitude/longitude, which the map draws natively
+                geometry: {
+                    type: "point",
+                    x: result.display_point.x,
+                    y: result.display_point.y,
+                    spatialReference: { wkid: 4326 }
+                },
                 symbol: {
                     type: "simple-marker",
                     color: "#E11D48", // Rose Red for search target

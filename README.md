@@ -130,7 +130,7 @@ The backend pipes queries through the core orchestrator engine in `gis_pipeline.
 2.  **Coordinate Flow:** 
     - Input (Coordinates) -> Parse & Validate (`CoordinateParser`) -> Find Nearby Markers (MapServer query).
 
-The search box calls the backend's `/search` endpoint, which returns either parsed coordinates or address suggestions, so both kinds of input share one box.
+The search box calls the backend's `/search` endpoint, which returns either parsed coordinates or address suggestions, so both kinds of input share one box. For UTM input, the backend also converts the point to latitude/longitude (`utm_projection.py`) so the map can draw the search pin without loading ArcGIS's projection engine; the marker search itself uses the original UTM values.
 
 Markers are found with a distance query: the NYSDOT service buffers the location by a true 0.5-mile radius in its own UTM 18N (meter) coordinate system, so the search area is an accurate circle whether the location arrives as lat/lon, UTM or Web Mercator. The service draws the same markers in nine scale-dependent sub-layers; all are queried in parallel and duplicates are removed by `OBJECTID`.
 
