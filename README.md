@@ -55,11 +55,10 @@ An internet connection is required, because the app looks up addresses and refer
 - **Node.js & npm** (LTS recommended)
 
 ### 1. Setup the Backend
-From the root project directory, install the backend's Python packages:
+From the root project directory, install the FastAPI backend dependencies:
 ```bash
 python -m pip install fastapi uvicorn requests pydantic
 ```
-*(On macOS/Linux use `python3` if `python` isn't available.)*
 
 ### 2. Setup the Frontend
 Navigate into the `gis-frontend` directory and install the Node/Electron dependencies:
@@ -73,10 +72,18 @@ From inside the `gis-frontend` folder:
 ```bash
 npm run dev
 ```
-The app finds your Python installation, starts the backend (`main.py`) automatically, and shuts it down when you close the window. The backend's log output appears in the same terminal.
+The app finds a Python interpreter that has the backend packages installed (it tries `python`, `py` and `python3` on Windows, and `python3` then `python` elsewhere), starts the backend with it, and opens the window once the backend is ready. Backend log messages appear in the same terminal, and the backend shuts down when you close the window. The `uvicorn` command does not need to be on your PATH.
 
-- **Choosing a specific Python:** if you use a virtual environment or have several Pythons installed, set `GIS_PYTHON` to the interpreter's path before running, e.g. `set GIS_PYTHON=C:\path\to\venv\Scripts\python.exe` (Windows) or `export GIS_PYTHON=/path/to/venv/bin/python` (macOS/Linux).
-- **Running the backend on its own:** `python main.py` from the root project directory serves it on `http://127.0.0.1:8000`. If a backend is already running when the app starts, the app uses it instead of starting another.
+If you have more than one Python installed, point the app at the right one with the `GIS_PYTHON` environment variable:
+```bash
+# Windows (PowerShell)
+$env:GIS_PYTHON = "C:\path\to\python.exe"; npm run dev
+
+# macOS / Linux
+GIS_PYTHON=/path/to/python npm run dev
+```
+
+You can also run the backend yourself with `python main.py` from the root directory; `npm run dev` detects it and uses it instead of starting its own.
 
 ---
 
