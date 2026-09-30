@@ -1,14 +1,15 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from gis_pipeline import ArcGISError, ReferenceMarkerService
+from gis_pipeline import ArcGISServiceError, ReferenceMarkerService
 
 
-def arcgis_response(body):
+def arcgis_response(body, status_code=200):
     """Builds a fake requests.Response returning the given JSON body."""
     response = MagicMock()
     response.json.return_value = body
-    response.raise_for_status.return_value = None
+    response.status_code = status_code
+    response.ok = status_code < 400
     return response
 
 
@@ -29,7 +30,7 @@ class FindNearbyTests(unittest.TestCase):
         self.service = ReferenceMarkerService()
         self.point = {"x": -74.3, "y": 41.7}
 
-    @patch("gis_pipeline.requests.get")
+    @patch("gis_pipeline.requests.Session.get")
     def test_queries_every_layer_with_a_true_mile_distance(self, mock_get):
         mock_get.return_value = arcgis_response(layer_body())
 
@@ -47,35 +48,35 @@ class FindNearbyTests(unittest.TestCase):
             self.assertNotIn("tolerance", params)  # the old pixel-based search is gone
             self.assertIn("timeout", call.kwargs)
 
-    @patch("gis_pipeline.requests.get")
+    @patch("gis_pipeline.requests.Session.get")
     def test_removes_duplicates_across_layers(self, mock_get):
         mock_get.return_value = arcgis_response(layer_body(feature(1, "44 8201 1001", 10, 20), feature(2, "44 8201 1002", 30, 40)))
 
-        markers = self.service.find_nearby(self.point, 4326)
+        markers = self.service.find_nearby(self.point, 4326).markers
 
         self.assertEqual(sorted(m["attributes"]["OBJECTID"] for m in markers), [1, 2])
 
-    @patch("gis_pipeline.requests.get")
+    @patch("gis_pipeline.requests.Session.get")
     def test_uses_display_names_and_attaches_spatial_reference(self, mock_get):
         mock_get.return_value = arcgis_response(layer_body(feature(7, "44 8201 1007", 10, 20)))
 
-        marker = self.service.find_nearby(self.point, 4326)[0]
+        marker = self.service.find_nearby(self.point, 4326).markers[0]
 
         self.assertEqual(marker["attributes"]["Reference Marker Number"], "44 8201 1007")
         self.assertNotIn("REFERENCE_MARKER_PANEL", marker["attributes"])
         self.assertEqual(marker["geometry"]["spatialReference"]["latestWkid"], 3857)
         self.assertEqual((marker["geometry"]["x"], marker["geometry"]["y"]), (10, 20))
 
-    @patch("gis_pipeline.requests.get")
+    @patch("gis_pipeline.requests.Session.get")
     def test_raises_when_service_reports_an_error(self, mock_get):
         mock_get.return_value = arcgis_response({"error": {"code": 400, "message": "Invalid geometry"}})
 
-        with self.assertRaises(ArcGISError):
+        with self.assertRaises(ArcGISServiceError):
             self.service.find_nearby(self.point, 4326)
 
 
 class IdentifyEndpointTests(unittest.TestCase):
-    @patch("gis_pipeline.requests.get")
+    @patch("gis_pipeline.requests.Session.get")
     def test_identify_returns_marker_list(self, mock_get):
         from fastapi.testclient import TestClient
         import main

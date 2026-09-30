@@ -4,11 +4,12 @@ import signal
 from typing import Dict, Optional
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from gis_pipeline import PipelineOrchestrator
+from gis_pipeline import ArcGISError, PipelineOrchestrator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -26,9 +27,17 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Partial-Results"],  # lets the frontend read it
 )
 
 orchestrator = PipelineOrchestrator()
+
+
+@app.exception_handler(ArcGISError)
+def handle_arcgis_error(request: Request, error: ArcGISError):
+    """Turns NYS service failures into a status code and a message the UI can show."""
+    logger.error(f"{request.url.path} failed: {error}")
+    return JSONResponse(status_code=error.status_code, content={"detail": error.user_message})
 
 
 class BackendServer:
@@ -77,9 +86,16 @@ def geocode_location(request: GeocodeRequest):
     return orchestrator.geocoder.geocode(request.magic_key)
 
 @app.post("/identify")
-def identify_marker(request: IdentifyRequest):
-    """Returns the unique reference markers within radius_miles of the point."""
-    return orchestrator.marker_service.find_nearby(request.point, request.sr, request.radius_miles)
+def identify_marker(request: IdentifyRequest, response: Response):
+    """Returns the unique reference markers within radius_miles of the point.
+
+    Sets the X-Partial-Results header when part of the search failed, so the
+    list may be incomplete.
+    """
+    result = orchestrator.marker_service.find_nearby(request.point, request.sr, request.radius_miles)
+    if result.is_partial:
+        response.headers["X-Partial-Results"] = "true"
+    return result.markers
 
 @app.post("/shutdown")
 def shutdown():

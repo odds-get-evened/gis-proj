@@ -41,6 +41,10 @@ An internet connection is required, because the app looks up addresses and refer
 ### Troubleshooting
 
 - **"NYS GIS Lookup could not start":** the background lookup service failed to start. The message shows the location of `backend.log`, which records what went wrong. The most common cause is another program already using port 8000; close it and try again.
+- **"...is taking too long to respond":** a New York State GIS service is slow or overloaded. The app already retried once for you; wait a moment and search again.
+- **"Could not reach the...":** the app couldn't connect to a New York State GIS service. Check your internet connection (and any VPN or firewall), then try again.
+- **"...reported a problem":** the state service answered with an error. Try again; if it keeps happening, the service may be down for maintenance.
+- **"Part of the search timed out, so some markers may be missing":** most of the marker search worked, but part of it was too slow. The markers shown are correct; search again to make sure none are missing.
 - **Log file locations:**
   - Windows: `%APPDATA%\nys-gis-frontend\logs\backend.log`
   - macOS: `~/Library/Logs/nys-gis-frontend/backend.log`

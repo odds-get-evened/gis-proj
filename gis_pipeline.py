@@ -1,6 +1,8 @@
 import logging
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import requests
@@ -9,27 +11,104 @@ logger = logging.getLogger(__name__)
 
 
 class ArcGISError(Exception):
-    """Raised when an ArcGIS REST service reports an error in its response body."""
+    """Base class for failures talking to an ArcGIS REST service.
+
+    Each subclass carries the HTTP status the backend API should answer with and
+    a message that is safe to show to the person using the app.
+    """
+    status_code = 502
+
+    def __init__(self, service_name: str, detail: str):
+        super().__init__(f"{service_name}: {detail}")
+        self.service_name = service_name
+        self.detail = detail
+
+    @property
+    def user_message(self) -> str:
+        return f"The {self.service_name} reported a problem. Please try again."
+
+
+class ArcGISServiceError(ArcGISError):
+    """The service answered, but with an error (an HTTP error or an ArcGIS error payload)."""
+
+
+class ArcGISTimeoutError(ArcGISError):
+    """The service did not answer within the timeout, even after retrying."""
+    status_code = 504
+
+    @property
+    def user_message(self) -> str:
+        return f"The {self.service_name} is taking too long to respond. Please try again in a moment."
+
+
+class ArcGISConnectionError(ArcGISError):
+    """The service could not be reached at all (no network, DNS failure, refused connection)."""
+    status_code = 503
+
+    @property
+    def user_message(self) -> str:
+        return f"Could not reach the {self.service_name}. Check your internet connection and try again."
 
 
 class ArcGISClient:
-    """Base client for interacting with ArcGIS REST services."""
-    TIMEOUT_SECONDS = 15
+    """Base client for ArcGIS REST services, with timeouts and a bounded retry.
+
+    Worst case for one request: MAX_ATTEMPTS x (CONNECT + READ) seconds plus backoff,
+    about 31 seconds with the values below. The frontend's own request timeout is
+    set above this so the backend always gets to report what went wrong.
+    """
+    SERVICE_NAME = "ArcGIS service"
+    CONNECT_TIMEOUT_SECONDS = 5
+    READ_TIMEOUT_SECONDS = 10
+    MAX_ATTEMPTS = 2
+    RETRY_BACKOFF_SECONDS = 1.0
+    # Gateway/overload statuses that usually clear up on their own
+    RETRYABLE_STATUS_CODES = {502, 503, 504}
+
+    def __init__(self):
+        # One session per service reuses connections across requests
+        self._session = requests.Session()
 
     def _make_request(self, url: str, params: Dict) -> Dict:
         params = {**params, "f": "json"}
         logger.info(f"Outgoing Request URL: {url} | Params: {params}")
-        response = requests.get(url, params=params, timeout=self.TIMEOUT_SECONDS)
-        response.raise_for_status()
+        response = self._get_with_retry(url, params)
         data = response.json()
         # ArcGIS reports most failures as HTTP 200 with an "error" object in the body
         if "error" in data:
             error = data["error"]
-            raise ArcGISError(f"{url} returned error {error.get('code')}: {error.get('message')}")
+            raise ArcGISServiceError(self.SERVICE_NAME, f"error {error.get('code')}: {error.get('message')}")
         return data
+
+    def _get_with_retry(self, url: str, params: Dict) -> requests.Response:
+        """GETs url, retrying timeouts, connection failures and gateway errors once."""
+        timeout = (self.CONNECT_TIMEOUT_SECONDS, self.READ_TIMEOUT_SECONDS)
+        for attempt in range(1, self.MAX_ATTEMPTS + 1):
+            is_last_attempt = attempt == self.MAX_ATTEMPTS
+            try:
+                response = self._session.get(url, params=params, timeout=timeout)
+            except requests.Timeout as error:  # checked first: ConnectTimeout is also a ConnectionError
+                if is_last_attempt:
+                    raise ArcGISTimeoutError(self.SERVICE_NAME, f"no response from {url}") from error
+                logger.warning(f"Timed out calling {url} (attempt {attempt}); retrying")
+            except requests.ConnectionError as error:
+                if is_last_attempt:
+                    raise ArcGISConnectionError(self.SERVICE_NAME, f"could not connect to {url}") from error
+                logger.warning(f"Could not connect to {url} (attempt {attempt}); retrying")
+            else:
+                if response.status_code in self.RETRYABLE_STATUS_CODES and not is_last_attempt:
+                    logger.warning(f"{url} returned HTTP {response.status_code} (attempt {attempt}); retrying")
+                elif not response.ok:
+                    raise ArcGISServiceError(self.SERVICE_NAME, f"HTTP {response.status_code} from {url}")
+                else:
+                    return response
+            time.sleep(self.RETRY_BACKOFF_SECONDS * attempt)
+        raise AssertionError("unreachable: the last attempt always returns or raises")
+
 
 class GeocoderService(ArcGISClient):
     """Handles location suggestions and geocoding."""
+    SERVICE_NAME = "NYS address lookup service"
     SUGGEST_URL = "https://nysgeohub.ny.gov/arcgis/rest/services/Geocoder/NYS_Geocoder/GeocodeServer/suggest"
     FIND_URL = "https://nysgeohub.ny.gov/arcgis/rest/services/Geocoder/NYS_Geocoder/GeocodeServer/findAddressCandidates"
 
@@ -55,8 +134,20 @@ class GeocoderService(ArcGISClient):
             return candidate
         return {}
 
+@dataclass
+class NearbyMarkers:
+    """Result of a nearby-marker search.
+
+    is_partial is True when some sub-layers failed but others answered, so the
+    list may be missing markers.
+    """
+    markers: List[Dict] = field(default_factory=list)
+    is_partial: bool = False
+
+
 class ReferenceMarkerService(ArcGISClient):
     """Finds NYSDOT reference markers within a true ground distance of a point."""
+    SERVICE_NAME = "NYSDOT reference marker service"
     MAPSERVER_URL = "https://gis.dot.ny.gov/hostingny/rest/services/Ref_Marker/MapServer"
 
     # The service draws the same marker feature class in nine sub-layers, one per map
@@ -64,7 +155,7 @@ class ReferenceMarkerService(ArcGISClient):
     # duplicates are removed by OBJECTID.
     LAYER_IDS = (1, 2, 3, 4, 5, 6, 7, 8, 9)
 
-    def find_nearby(self, point: Dict, sr: int, radius_miles: float = 0.5, out_sr: int = 3857) -> List[Dict]:
+    def find_nearby(self, point: Dict, sr: int, radius_miles: float = 0.5, out_sr: int = 3857) -> NearbyMarkers:
         """
         Returns the unique reference markers within radius_miles of point.
 
@@ -72,20 +163,33 @@ class ReferenceMarkerService(ArcGISClient):
         projected coordinate system (UTM 18N, meters), so the search area is a true
         circle whatever spatial reference the input point uses (lat/lon, UTM or Web Mercator).
 
-        Each result is {"attributes": {...}, "geometry": {..., "spatialReference": {...}}},
+        Each marker is {"attributes": {...}, "geometry": {..., "spatialReference": {...}}},
         with attributes keyed by their display names (e.g. "Reference Marker Number").
+
+        If some sub-layers fail, the markers from the others are returned with
+        is_partial=True. If every sub-layer fails, the first failure is raised,
+        preferring a timeout so the message reflects the most likely cause.
         """
+        def query(layer_id):
+            try:
+                return self._query_layer(layer_id, point, sr, radius_miles, out_sr), None
+            except ArcGISError as error:
+                logger.warning(f"Layer {layer_id} failed: {error}")
+                return None, error
+
         with ThreadPoolExecutor(max_workers=len(self.LAYER_IDS)) as pool:
-            layer_results = pool.map(
-                lambda layer_id: self._query_layer(layer_id, point, sr, radius_miles, out_sr),
-                self.LAYER_IDS,
-            )
+            outcomes = list(pool.map(query, self.LAYER_IDS))
+
+        errors = [error for _, error in outcomes if error is not None]
+        if len(errors) == len(outcomes):
+            timeouts = [e for e in errors if isinstance(e, ArcGISTimeoutError)]
+            raise (timeouts or errors)[0]
 
         unique_markers: Dict[int, Dict] = {}
-        for markers in layer_results:
-            for marker in markers:
+        for markers, _ in outcomes:
+            for marker in markers or []:
                 unique_markers.setdefault(marker["attributes"].get("OBJECTID"), marker)
-        return list(unique_markers.values())
+        return NearbyMarkers(markers=list(unique_markers.values()), is_partial=bool(errors))
 
     def _query_layer(self, layer_id: int, point: Dict, sr: int, radius_miles: float, out_sr: int) -> List[Dict]:
         """Runs a distance query against one sub-layer and normalizes its features."""
@@ -160,7 +264,7 @@ class PipelineOrchestrator:
         if coord_point_sr:
             point, sr = coord_point_sr
             print(f"Detected coordinates: {point}, SR: {sr}")
-            return self.marker_service.find_nearby(point, sr, radius_miles=0.5)
+            return self.marker_service.find_nearby(point, sr, radius_miles=0.5).markers
 
         # 2. Suggest
         suggestions = self.geocoder.suggest(query)
@@ -188,4 +292,4 @@ class PipelineOrchestrator:
         print(f"Geocoded: {point}")
 
         # 4. Find nearby reference markers
-        return self.marker_service.find_nearby(point, sr, radius_miles=0.5)
+        return self.marker_service.find_nearby(point, sr, radius_miles=0.5).markers

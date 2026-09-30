@@ -456,6 +456,77 @@
     </div>
 
     <script>
+        /**
+         * Talks to the local FastAPI backend. Every request has a timeout, and
+         * failures are turned into messages that can be shown directly to the user.
+         */
+        class BackendApi {
+            // Longer than the backend's worst case (~31 s with one retry), so the
+            // backend normally reports the problem itself before this fires
+            static TIMEOUT_MS = 45000;
+
+            constructor(baseUrl) {
+                this.baseUrl = baseUrl;
+            }
+
+            async request(path, options = {}) {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), BackendApi.TIMEOUT_MS);
+                let response;
+                try {
+                    response = await fetch(this.baseUrl + path, { ...options, signal: controller.signal });
+                } catch (error) {
+                    if (error.name === 'AbortError') {
+                        throw new Error('The search took too long. Please try again.');
+                    }
+                    throw new Error("Lost connection to the app's lookup service. Please restart the app.");
+                } finally {
+                    clearTimeout(timer);
+                }
+
+                if (!response.ok) {
+                    let message = `The request failed (HTTP ${response.status}). Please try again.`;
+                    try {
+                        const body = await response.json();
+                        if (typeof body.detail === 'string') message = body.detail;
+                    } catch {
+                        // Body wasn't JSON; keep the generic message
+                    }
+                    throw new Error(message);
+                }
+                return response;
+            }
+
+            postJson(path, body) {
+                return this.request(path, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+            }
+
+            async suggestions(text) {
+                const response = await this.request(`/suggestions?text=${encodeURIComponent(text)}`);
+                return response.json();
+            }
+
+            async geocode(magicKey) {
+                const response = await this.postJson('/geocode', { magic_key: magicKey });
+                return response.json();
+            }
+
+            /** Resolves with { markers, isPartial }; isPartial means some results may be missing. */
+            async identify(point, sr, radiusMiles = 0.5) {
+                const response = await this.postJson('/identify', { point, sr, radius_miles: radiusMiles });
+                return {
+                    markers: await response.json(),
+                    isPartial: response.headers.get('X-Partial-Results') === 'true'
+                };
+            }
+        }
+
+        const api = new BackendApi('http://127.0.0.1:8000');
+
         let currentSuggestions = [];
         let mapView, graphicsLayer, mapGraphic;
 
@@ -515,28 +586,21 @@
 
                 try {
                     // Identify markers near clicked coordinates
-                    const response = await fetch('http://127.0.0.1:8000/identify', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({
-                            point: { x: clickedPoint.x, y: clickedPoint.y },
-                            sr: clickedPoint.spatialReference.wkid,
-                            radius_miles: 0.5
-                        })
-                    });
-                    
-                    if (!response.ok) throw new Error('Coordinate identification failed');
-                    const results = await response.json();
+                    const { markers, isPartial } = await api.identify(
+                        { x: clickedPoint.x, y: clickedPoint.y },
+                        clickedPoint.spatialReference.wkid,
+                        0.5
+                    );
                     
                     // Plot reference markers on the map
-                    plotMarkersOnMap(results);
+                    plotMarkersOnMap(markers);
                     
                     // Populate the UI Table
-                    renderTable(results);
+                    renderTable(markers, isPartial);
                     
                 } catch (error) {
                     console.error(error);
-                    alert("Identify error: " + error.message);
+                    alert(error.message);
                 } finally {
                     showLoading(false);
                 }
@@ -609,27 +673,13 @@
             document.getElementById('loader').style.display = show ? 'block' : 'none';
         }
 
-        async function fetchWithRetry(url, retries = 5, delay = 1000) {
-            for (let i = 0; i < retries; i++) {
-                try {
-                    const response = await fetch(url);
-                    if (response.ok) return response;
-                } catch (err) {
-                    console.log(`Backend not ready, retrying in ${delay}ms...`);
-                }
-                await new Promise(resolve => setTimeout(resolve, delay));
-            }
-            throw new Error('Backend server is not reachable.');
-        }
-
         async function search() {
             const address = document.getElementById('address').value;
             if (!address) return;
 
             showLoading(true);
             try {
-                const response = await fetchWithRetry(`http://127.0.0.1:8000/suggestions?text=${encodeURIComponent(address)}`);
-                currentSuggestions = await response.json();
+                currentSuggestions = await api.suggestions(address);
                 
                 const list = document.getElementById('suggestions');
                 const title = document.getElementById('suggestionsTitle');
@@ -650,7 +700,7 @@
                 }
             } catch (error) {
                 console.error('Error:', error);
-                alert('Connection Error: ' + error.message);
+                alert(error.message);
             } finally {
                 showLoading(false);
             }
@@ -663,17 +713,10 @@
             
             try {
                 // Geocode
-                const geoResponse = await fetch('http://127.0.0.1:8000/geocode', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({magic_key: suggestion.magicKey})
-                });
-                
-                if (!geoResponse.ok) throw new Error('Geocoding failed');
-                const candidate = await geoResponse.json();
+                const candidate = await api.geocode(suggestion.magicKey);
 
                 if (!candidate || !candidate.location || !candidate.spatialReference) {
-                    throw new Error('Geocoding result invalid or empty');
+                    throw new Error('That location could not be found on the map. Please pick another suggestion.');
                 }
                 
                 // Clear map graphics
@@ -698,33 +741,23 @@
                 graphicsLayer.add(targetPin);
 
                 // Identify
-                const idResponse = await fetch('http://127.0.0.1:8000/identify', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        point: candidate.location,
-                        sr: candidate.spatialReference.wkid
-                    })
-                });
-                
-                if (!idResponse.ok) throw new Error('Identification failed');
-                const results = await idResponse.json();
+                const { markers, isPartial } = await api.identify(candidate.location, candidate.spatialReference.wkid);
                 
                 // Plot found reference markers on the map
-                plotMarkersOnMap(results);
+                plotMarkersOnMap(markers);
 
                 // Populate UI Table
-                renderTable(results);
+                renderTable(markers, isPartial);
                 
             } catch (error) {
                 console.error('Error:', error);
-                alert('Error processing location: ' + error.message);
+                alert(error.message);
             } finally {
                 showLoading(false);
             }
         }
 
-        function renderTable(data) {
+        function renderTable(data, isPartial = false) {
             const head = document.getElementById('tableHead');
             const body = document.getElementById('tableBody');
             const emptyState = document.getElementById('emptyState');
@@ -737,13 +770,17 @@
             if (!data || data.length === 0) {
                 emptyState.style.display = 'flex';
                 table.style.display = 'none';
-                count.innerText = '0 records found';
+                count.innerText = isPartial
+                    ? '0 records found. Part of the search timed out; search again for a complete list.'
+                    : '0 records found';
                 return;
             }
 
             emptyState.style.display = 'none';
             table.style.display = 'table';
-            count.innerText = `${data.length} records found`;
+            count.innerText = isPartial
+                ? `${data.length} records found. Part of the search timed out, so some markers may be missing; search again for a complete list.`
+                : `${data.length} records found`;
 
             // Extract the 'attributes' child object from each item for the table rows
             const tableRows = data.map(item => item.attributes);
