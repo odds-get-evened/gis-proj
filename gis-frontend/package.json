@@ -1,7 +1,7 @@
 {
   "name": "nys-gis-frontend",
   "description": "NYS GIS Reference Marker GUI",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "main": "main.js",
   "repository": {
     "type": "git",
