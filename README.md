@@ -55,25 +55,28 @@ An internet connection is required, because the app looks up addresses and refer
 - **Node.js & npm** (LTS recommended)
 
 ### 1. Setup the Backend
-From the root project directory, install the FastAPI backend dependencies:
+From the root project directory, install the backend's Python packages:
 ```bash
-pip install fastapi uvicorn requests pydantic
+python -m pip install fastapi uvicorn requests pydantic
 ```
+*(On macOS/Linux use `python3` if `python` isn't available.)*
 
 ### 2. Setup the Frontend
 Navigate into the `gis-frontend` directory and install the Node/Electron dependencies:
 ```bash
 cd gis-frontend
 npm install
-npm install concurrently --save-dev
 ```
 
 ### 3. Run the Application
-Start both the FastAPI backend and the Electron UI simultaneously with a single command from inside the `gis-frontend` folder:
+From inside the `gis-frontend` folder:
 ```bash
 npm run dev
 ```
-*(The UI will open, automatically establish a robust connection with retry handling, and the backend server will shut down completely when you close the UI window.)*
+The app finds your Python installation, starts the backend (`main.py`) automatically, and shuts it down when you close the window. The backend's log output appears in the same terminal.
+
+- **Choosing a specific Python:** if you use a virtual environment or have several Pythons installed, set `GIS_PYTHON` to the interpreter's path before running, e.g. `set GIS_PYTHON=C:\path\to\venv\Scripts\python.exe` (Windows) or `export GIS_PYTHON=/path/to/venv/bin/python` (macOS/Linux).
+- **Running the backend on its own:** `python main.py` from the root project directory serves it on `http://127.0.0.1:8000`. If a backend is already running when the app starts, the app uses it instead of starting another.
 
 ---
 

@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Menu, dialog } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
@@ -7,6 +7,9 @@ const path = require('path');
 // Must match HOST/PORT in main.py and the URLs used in index.html
 const BACKEND_HOST = '127.0.0.1';
 const BACKEND_PORT = 8000;
+
+// Packages the backend needs when running from source (see README)
+const BACKEND_PACKAGES = ['fastapi', 'uvicorn', 'requests', 'pydantic'];
 
 /** Minimal HTTP client for talking to the local FastAPI backend. */
 class BackendClient {
@@ -50,13 +53,15 @@ class BackendClient {
 
 /**
  * Owns the lifecycle of the Python backend.
- * Packaged builds launch the bundled PyInstaller executable; in development
- * the backend is started separately by `npm run dev`, so nothing is spawned.
+ * Packaged builds launch the bundled PyInstaller executable. When running from
+ * source, it finds a Python interpreter with the backend packages installed and
+ * runs main.py with it, so no command needs to be on the PATH.
  */
 class BackendProcess {
   constructor(client) {
     this.client = client;
     this.child = null;
+    this.spawned = false;
   }
 
   get executablePath() {
@@ -68,9 +73,24 @@ class BackendProcess {
     return path.join(app.getPath('logs'), 'backend.log');
   }
 
-  start() {
-    if (!app.isPackaged) return;
+  /** The repository root, where main.py lives, when running from source. */
+  get sourceRoot() {
+    return path.join(__dirname, '..');
+  }
 
+  async start() {
+    if (await this.client.isHealthy()) {
+      console.log('A backend is already running; using it.');
+      return;
+    }
+    if (app.isPackaged) {
+      this.startPackaged();
+    } else {
+      this.startFromSource();
+    }
+  }
+
+  startPackaged() {
     const exe = this.executablePath;
     if (!fs.existsSync(exe)) {
       throw new Error(`Backend executable not found at:\n${exe}`);
@@ -79,15 +99,62 @@ class BackendProcess {
     fs.mkdirSync(path.dirname(this.logFilePath), { recursive: true });
     const log = fs.openSync(this.logFilePath, 'a');
 
-    this.child = spawn(exe, [], {
+    this.launch(exe, [], {
       cwd: path.dirname(exe),
       stdio: ['ignore', log, log],
-      windowsHide: true, // no console window on Windows
     });
+  }
+
+  startFromSource() {
+    const python = this.findPython();
+    console.log(`Starting backend with: ${python} main.py`);
+    this.launch(python, ['main.py'], {
+      cwd: this.sourceRoot,
+      stdio: 'inherit', // backend logs appear in the npm run dev terminal
+    });
+  }
+
+  launch(command, args, options) {
+    this.child = spawn(command, args, { ...options, windowsHide: true });
+    this.spawned = true;
+    this.child.on('error', (error) => console.error(`Could not start backend: ${error.message}`));
     this.child.on('exit', (code) => {
       console.log(`Backend exited with code ${code}`);
       this.child = null;
     });
+  }
+
+  /**
+   * Returns the first Python interpreter that can import every backend package.
+   * The GIS_PYTHON environment variable overrides the search.
+   */
+  findPython() {
+    const candidates = process.env.GIS_PYTHON
+      ? [process.env.GIS_PYTHON]
+      : process.platform === 'win32'
+        ? ['python', 'py', 'python3'] // 'py' is the Windows Python launcher
+        : ['python3', 'python'];
+
+    const check = `import ${BACKEND_PACKAGES.join(', ')}`;
+    let foundPythonWithoutPackages = null;
+
+    for (const candidate of candidates) {
+      const result = spawnSync(candidate, ['-c', check], { windowsHide: true, encoding: 'utf8' });
+      if (result.error) continue; // not installed / not on PATH
+      if (result.status === 0) return candidate;
+      if (/ModuleNotFoundError/.test(result.stderr || '')) foundPythonWithoutPackages ??= candidate;
+    }
+
+    if (foundPythonWithoutPackages) {
+      throw new Error(
+        `Python was found, but the backend packages aren't installed for it. Run:\n\n` +
+        `${foundPythonWithoutPackages} -m pip install ${BACKEND_PACKAGES.join(' ')}`
+      );
+    }
+    throw new Error(
+      `No Python interpreter was found (tried: ${candidates.join(', ')}).\n\n` +
+      `Install Python 3.12+, or set the GIS_PYTHON environment variable to the full path of python.exe.`
+    );
   }
 
   get isRunning() {
@@ -99,15 +166,19 @@ class BackendProcess {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (await this.client.isHealthy()) return;
-      if (app.isPackaged && !this.isRunning) {
-        throw new Error(`The backend stopped unexpectedly.\nSee the log at:\n${this.logFilePath}`);
+      if (this.spawned && !this.isRunning) {
+        throw new Error(
+          app.isPackaged
+            ? `The backend stopped unexpectedly.\nSee the log at:\n${this.logFilePath}`
+            : 'The backend stopped unexpectedly. See the npm run dev terminal for the error.'
+        );
       }
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
     throw new Error(
       app.isPackaged
         ? `The backend did not start within ${timeoutMs / 1000} seconds.\nSee the log at:\n${this.logFilePath}`
-        : `No backend is answering on ${BACKEND_HOST}:${BACKEND_PORT}. Start the app with "npm run dev".`
+        : `The backend did not start within ${timeoutMs / 1000} seconds. See the npm run dev terminal for details.`
     );
   }
 
@@ -145,7 +216,7 @@ class GisLookupApp {
   async onReady() {
     Menu.setApplicationMenu(null); // Disable default menu bar
     try {
-      this.backend.start();
+      await this.backend.start();
       await this.backend.waitUntilReady();
     } catch (error) {
       dialog.showErrorBox('NYS GIS Lookup could not start', error.message);
