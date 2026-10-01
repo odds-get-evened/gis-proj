@@ -71,6 +71,23 @@ The app shows the NYSDOT reference markers within **half a mile** of any locatio
 
    Each group shows its three best matches first; click **Show more** under a group to see the rest. A place is only listed once, in its most specific group. The words you typed are shown in **bold**, and a moment after the list appears each suggestion gains a second line with its town and county (for example *Ulster County*), so similar-sounding places are easy to tell apart.
 
+### Search by reference marker number
+If you know a marker's number (from its green panel at the roadside, or from the results table), type it into the search box. The number is the route followed by the two lines of digits on the panel, for example **`44 8601 1035`**:
+
+| Part | Example | Meaning |
+| --- | --- | --- |
+| Route | `44` | the route the marker is on (may include letters, e.g. `9W`) |
+| First line | `8601` | region and county (`86` = Region 8, Ulster County) and control section (`01`) |
+| Second line | `1035` | the marker's sequence number along the route |
+
+Spacing doesn't matter: `44 8601 1035`, `44 86011035` and `4486011035` all work.
+
+- As you type (from the route plus four digits, e.g. `44 8601`), the list shows the matching **Reference Markers** in order, up to ten at a time; keep typing to narrow it down.
+- Pick a marker (click, or **↓** and **Enter**) to jump to it: its pin gets a red ring, the markers around it are shown, and its row is highlighted in the table.
+- Typing a complete number and pressing **Enter** goes straight to that marker.
+
+If nothing matches a number-like search, the app looks it up as an address instead.
+
 ### Search by coordinates
 Type two numbers into the same search box and press **Enter**; the markers appear right away. While you're still typing, the list shows how your coordinates will be read, and no search runs until you press **Enter** or click that entry. These formats are recognized:
 

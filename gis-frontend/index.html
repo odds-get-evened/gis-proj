@@ -575,7 +575,8 @@
                 });
             }
 
-            /** Resolves with {type: "coordinates", point, sr, description, display_point}
+            /** Resolves with {type: "coordinates", point, sr, description, display_point},
+             *  {type: "markers", query, is_complete, total, is_partial, markers}
              *  or {type: "suggestions", groups: [{category, label, suggestions}]}. */
             async search(text) {
                 const response = await this.request(`/search?text=${encodeURIComponent(text)}`);
@@ -1189,6 +1190,105 @@
             list.appendChild(item);
         }
 
+        // Reference markers whose number matches what was typed (e.g. "44 8601")
+        function renderMarkerMatches(result) {
+            const list = document.getElementById('suggestions');
+            const title = document.getElementById('suggestionsTitle');
+            list.innerHTML = '';
+            currentSuggestions = [];
+            suggestionListId++;
+            title.textContent = 'Reference Markers';
+            title.style.display = 'block';
+
+            const typedDigits = result.query.split(' ').slice(1).join('').length;
+            result.markers.forEach((marker, i) => {
+                const item = document.createElement('li');
+                item.className = 'suggestion-item';
+                item.id = `marker-option-${i}`;
+                item.setAttribute('role', 'option');
+
+                const icon = document.createElement('span');
+                icon.className = 'suggestion-icon';
+                icon.textContent = '🏷️';
+                const body = document.createElement('span');
+                body.className = 'suggestion-body';
+                const text = document.createElement('span');
+                text.className = 'suggestion-text';
+                appendMarkerNumber(text, marker.number, typedDigits);
+                const context = document.createElement('span');
+                context.className = 'suggestion-context';
+                context.textContent = `Route ${marker.number.split(' ')[0]} reference marker`;
+                body.append(text, context);
+                item.append(icon, body);
+                item.onclick = () => showMarker(marker);
+                list.appendChild(item);
+            });
+
+            if (result.total > result.markers.length) {
+                showListNote(list, `Showing the first ${result.markers.length} of ${result.total} matches. Type more of the number to narrow it down.`);
+            }
+            if (result.is_partial) {
+                showListNote(list, 'Part of the search timed out, so some markers may be missing.');
+            }
+        }
+
+        // Writes a marker number like "44 8601 1035", with the route and the digits typed so far in bold
+        function appendMarkerNumber(parent, number, typedDigits) {
+            const [route, ...groups] = number.split(' ');
+            const strong = document.createElement('strong');
+            strong.textContent = route;
+            parent.appendChild(strong);
+            let remaining = typedDigits;
+            groups.forEach(group => {
+                parent.appendChild(document.createTextNode(' '));
+                const matched = Math.max(0, Math.min(remaining, group.length));
+                if (matched > 0) {
+                    const bold = document.createElement('strong');
+                    bold.textContent = group.slice(0, matched);
+                    parent.appendChild(bold);
+                }
+                if (matched < group.length) parent.appendChild(document.createTextNode(group.slice(matched)));
+                remaining -= matched;
+            });
+        }
+
+        function showListNote(list, message) {
+            const note = document.createElement('div');
+            note.className = 'suggestion-message';
+            note.textContent = message;
+            list.appendChild(note);
+        }
+
+        // Shows one reference marker: a red ring around its pin, the markers near it,
+        // and its row highlighted in the table
+        async function showMarker(marker) {
+            showLoading(true);
+            try {
+                graphicsLayer.removeAll();
+                const point = { x: marker.geometry.x, y: marker.geometry.y };
+                const spatialReference = marker.geometry.spatialReference;
+                graphicsLayer.add(new mapGraphic({
+                    geometry: { type: "point", ...point, spatialReference },
+                    symbol: {
+                        type: "simple-marker",
+                        color: "#E11D48", // Rose Red for the searched marker; its green pin is drawn on top
+                        size: "18px",
+                        outline: { color: "#FFFFFF", width: 2 }
+                    }
+                }));
+
+                const { markers, isPartial } = await api.identify(point, spatialReference.wkid);
+                plotMarkersOnMap(markers);
+                renderTable(markers, isPartial);
+                highlightTableRow(marker.attributes.OBJECTID);
+            } catch (error) {
+                console.error('Error:', error);
+                alert(error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
         // A short note in place of the suggestion list (e.g. a problem found while typing)
         function showSuggestionMessage(message) {
             const list = document.getElementById('suggestions');
@@ -1229,6 +1329,8 @@
 
             onInput() {
                 clearTimeout(this.typingTimer);
+                // The highlighted suggestion belongs to the old text; Enter now means "search this"
+                this.resetHighlight();
                 const text = this.input.value.trim();
                 if (text.length < SearchBox.MIN_CHARACTERS) {
                     this.requestId++; // drop any answer still on its way
@@ -1256,6 +1358,13 @@
                     if (result.type === 'coordinates') {
                         if (explicit) await showCoordinateResult(result);
                         else renderCoordinatePreview(result);
+                    } else if (result.type === 'markers') {
+                        // Enter on a complete number with a single match goes straight to it
+                        if (explicit && result.is_complete && result.markers.length === 1) {
+                            await showMarker(result.markers[0]);
+                        } else {
+                            renderMarkerMatches(result);
+                        }
                     } else {
                         renderSuggestionGroups(result.groups, text);
                     }

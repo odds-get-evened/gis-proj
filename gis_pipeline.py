@@ -294,9 +294,58 @@ class ReferenceMarkerService(ArcGISClient):
         is_partial=True. If every sub-layer fails, the first failure is raised,
         preferring a timeout so the message reflects the most likely cause.
         """
+        params = {
+            "geometry": f"{point['x']},{point['y']}",
+            "geometryType": "esriGeometryPoint",
+            "inSR": sr,
+            "spatialRel": "esriSpatialRelIntersects",
+            "distance": radius_miles,
+            "units": "esriSRUnit_StatuteMile",
+            "outFields": "*",
+            "returnGeometry": "true",
+            "outSR": out_sr,
+        }
+        markers, is_partial = self._query_all_layers(params)
+        return NearbyMarkers(markers=markers, is_partial=is_partial)
+
+    MAX_NUMBER_MATCHES = 10
+
+    def find_by_number(self, number: "MarkerNumber", out_sr: int = 3857) -> "MarkerMatches":
+        """Finds markers whose number matches a typed (complete or partial) marker number.
+
+        Stored numbers look like " 44 86011035" (route, then 8 digits), with padding
+        that varies by route length, so the server is asked for a loose match and the
+        exact comparison is done here, ignoring spaces. Matches come back in marker
+        order, at most MAX_NUMBER_MATCHES of them; total says how many matched.
+        """
+        params = {
+            # Route and digits are validated as letters/digits only, so this is safe to embed
+            "where": f"UPPER(REFERENCE_MARKER_PANEL) LIKE '%{number.route}%{number.digits}%'",
+            "outFields": "*",
+            "returnGeometry": "true",
+            "outSR": out_sr,
+        }
+        markers, is_partial = self._query_all_layers(params)
+
+        matches = []
+        for marker in markers:
+            stored = MarkerNumber.from_stored(marker["attributes"].get("Reference Marker Number"))
+            if stored and stored.route == number.route and stored.digits.startswith(number.digits) and marker.get("geometry"):
+                matches.append({**marker, "number": stored.display})
+        matches.sort(key=lambda m: m["number"])
+        return MarkerMatches(markers=matches[: self.MAX_NUMBER_MATCHES], total=len(matches), is_partial=is_partial)
+
+    def _query_all_layers(self, params: Dict) -> Tuple[List[Dict], bool]:
+        """Runs the same query against every sub-layer in parallel.
+
+        Returns (unique markers, is_partial). If some sub-layers fail, the markers from
+        the others are returned with is_partial=True. If every sub-layer fails, the
+        first failure is raised, preferring a timeout so the message reflects the most
+        likely cause.
+        """
         def query(layer_id):
             try:
-                return self._query_layer(layer_id, point, sr, radius_miles, out_sr), None
+                return self._query_layer(layer_id, params), None
             except ArcGISError as error:
                 logger.warning(f"Layer {layer_id} failed: {error}")
                 return None, error
@@ -313,21 +362,11 @@ class ReferenceMarkerService(ArcGISClient):
         for markers, _ in outcomes:
             for marker in markers or []:
                 unique_markers.setdefault(marker["attributes"].get("OBJECTID"), marker)
-        return NearbyMarkers(markers=list(unique_markers.values()), is_partial=bool(errors))
+        return list(unique_markers.values()), bool(errors)
 
-    def _query_layer(self, layer_id: int, point: Dict, sr: int, radius_miles: float, out_sr: int) -> List[Dict]:
-        """Runs a distance query against one sub-layer and normalizes its features."""
-        params = {
-            "geometry": f"{point['x']},{point['y']}",
-            "geometryType": "esriGeometryPoint",
-            "inSR": sr,
-            "spatialRel": "esriSpatialRelIntersects",
-            "distance": radius_miles,
-            "units": "esriSRUnit_StatuteMile",
-            "outFields": "*",
-            "returnGeometry": "true",
-            "outSR": out_sr,
-        }
+    def _query_layer(self, layer_id: int, params: Dict) -> List[Dict]:
+        """Runs a query against one sub-layer and normalizes its features."""
+        out_sr = params.get("outSR", 3857)
         data = self._make_request(f"{self.MAPSERVER_URL}/{layer_id}/query", params)
         if data.get("exceededTransferLimit"):
             logger.warning(f"Layer {layer_id} returned more markers than the server limit; results are truncated")
@@ -344,6 +383,64 @@ class ReferenceMarkerService(ArcGISClient):
                 geometry = {**geometry, "spatialReference": spatial_reference}
             markers.append({"attributes": attributes, "geometry": geometry})
         return markers
+
+
+@dataclass
+class MarkerMatches:
+    """Result of a marker-number search."""
+    markers: List[Dict] = field(default_factory=list)  # each also has "number", e.g. "44 8601 1035"
+    total: int = 0              # how many matched in all (markers holds at most MAX_NUMBER_MATCHES)
+    is_partial: bool = False
+
+
+@dataclass
+class MarkerNumber:
+    """A reference marker number, as printed on the marker's panel.
+
+    route:  the route, upper-case, e.g. "44" or "9W"
+    digits: up to 8 digits: region + county (2), control section (2), sequence (4).
+            Fewer than 8 means a partial number typed so far.
+    """
+    route: str
+    digits: str
+
+    CODE_LENGTH = 8
+
+    @property
+    def is_complete(self) -> bool:
+        return len(self.digits) == self.CODE_LENGTH
+
+    @property
+    def display(self) -> str:
+        """Grouped like the panel's three lines: "44 8601 1035"."""
+        return " ".join(part for part in (self.route, self.digits[:4], self.digits[4:]) if part)
+
+    @classmethod
+    def from_stored(cls, value: Optional[str]) -> Optional["MarkerNumber"]:
+        """Reads a stored number such as " 44 86011035" (padding varies)."""
+        compact = "".join((value or "").split()).upper()
+        if len(compact) <= cls.CODE_LENGTH or not compact[-cls.CODE_LENGTH:].isdigit():
+            return None
+        return cls(route=compact[: -cls.CODE_LENGTH], digits=compact[-cls.CODE_LENGTH:])
+
+
+class MarkerNumberParser:
+    """Recognizes a reference marker number typed into the search box.
+
+    Accepts the route (1-3 digits plus up to 2 letters, e.g. 44, 9W, 990V) followed by
+    the panel digits, with or without spaces: "44 8601 1035", "44 86011035",
+    "4486011035". At least 4 digits are needed after the route, so partial numbers
+    such as "44 8601" can be suggested while typing.
+    """
+    _SPACED = re.compile(r"^\s*(\d{1,3}[A-Za-z]{0,2})\s+((?:\d\s*){4,8})$")
+    _COMPACT = re.compile(r"^\s*(\d{1,3}[A-Za-z]{0,2})(\d{8})\s*$")
+
+    def parse(self, text: str) -> Optional[MarkerNumber]:
+        match = self._SPACED.match(text) or self._COMPACT.match(text)
+        if not match:
+            return None
+        return MarkerNumber(route=match.group(1).upper(), digits="".join(match.group(2).split()))
+
 
 class CoordinateError(ValueError):
     """Raised when text is clearly coordinates but can't be used (e.g. outside New York)."""
@@ -450,6 +547,7 @@ class PipelineOrchestrator:
         self.geocoder = GeocoderService()
         self.marker_service = ReferenceMarkerService()
         self.coordinate_parser = CoordinateParser()
+        self.marker_number_parser = MarkerNumberParser()
 
     def run(self, query: str, choice_index: Optional[int] = None) -> Optional[List[Dict]]:
         """

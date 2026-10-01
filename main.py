@@ -120,6 +120,12 @@ def search(text: str):
     "display_point"}: point/sr are ready for /identify, and display_point is the same
     location in latitude/longitude (WGS 84) for drawing the pin on the map.
 
+    A reference marker number (complete, or partial while typing, e.g. "44 8601")
+    that matches markers comes back as {"type": "markers", "query", "is_complete",
+    "total", "is_partial", "markers": [...]}; each marker has the same shape as
+    /identify results plus "number" (e.g. "44 8601 1035"). If no marker matches,
+    the text is treated as a place name instead.
+
     Anything else is treated as a place name and comes back as
     {"type": "suggestions", "groups": [{"category", "label", "suggestions": [...]}, ...]},
     grouped by kind of place (addresses, intersections, roads, towns & cities, counties).
@@ -133,6 +139,19 @@ def search(text: str):
             "description": coordinates.description,
             "display_point": coordinates.display_point,
         }
+    number = orchestrator.marker_number_parser.parse(text)
+    if number:
+        matches = orchestrator.marker_service.find_by_number(number)
+        if matches.markers:
+            return {
+                "type": "markers",
+                "query": number.display,
+                "is_complete": number.is_complete,
+                "total": matches.total,
+                "is_partial": matches.is_partial,
+                "markers": matches.markers,
+            }
+
     groups = orchestrator.geocoder.suggest_grouped(text)
     return {"type": "suggestions", "groups": [asdict(group) for group in groups]}
 
