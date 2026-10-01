@@ -104,10 +104,19 @@ The numbers can be separated by a comma, a semicolon or spaces, and degree signs
 Click anywhere on the map to see the markers around that spot.
 
 ### Reading the results
+- The **Reference Marker Details** table shows each marker's essentials:
+
+  | Column | Example | Meaning |
+  | --- | --- | --- |
+  | Distance | *307 ft* | how far the marker is from your search location |
+  | Marker Number | *44 8601 1035* | the number on the marker's panel (route, then its two lines of digits) |
+  | Route | *44* | the route the marker is on |
+  | County | *Ulster County* | the county, decoded from the marker's NYSDOT region/county code |
+
+- Click **Details** on a row for everything about that marker: the summary above plus its NYSDOT region, followed by every field exactly as the NYSDOT service provides it.
 - The table lists markers **closest first**. The **Distance** column shows the ground distance from your search location: feet under a tenth of a mile (e.g. *420 ft*), miles beyond (e.g. *0.32 mi*). When you search for a marker by number, distances are measured from that marker, so it appears first at *0 ft*.
 - The **red pin** marks your search location, and **green pins** are the reference markers found.
 - Clicking a green pin highlights its row in the **Reference Marker Details** table; clicking a row moves the map to its pin.
-- Click **Details** on any row to see every field for that marker.
 
 ---
 

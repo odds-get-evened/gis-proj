@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 import requests
 
 from geodesy import Geodesy, wkid_of
+from nysdot_codes import RegionCountyCodes
 from utm_projection import UTM_ZONE_18N
 
 logger = logging.getLogger(__name__)
@@ -289,8 +290,9 @@ class ReferenceMarkerService(ArcGISClient):
         circle whatever spatial reference the input point uses (lat/lon, UTM or Web Mercator).
 
         Each marker is {"attributes": {...}, "geometry": {..., "spatialReference": {...}},
-        "distance_miles": ...}, with attributes keyed by their display names (e.g.
-        "Reference Marker Number"). Markers are sorted closest first; distance_miles is
+        "summary": {...}, "distance_miles": ...}, with attributes keyed by their display
+        names (e.g. "Reference Marker Number") and summary holding the readable number,
+        route, county and region (see _summarize). Markers are sorted closest first; distance_miles is
         the ground distance from point (None if it can't be worked out, sorted last).
 
         If some sub-layers fail, the markers from the others are returned with
@@ -393,14 +395,33 @@ class ReferenceMarkerService(ArcGISClient):
         spatial_reference = data.get("spatialReference", {"wkid": out_sr})
         markers = []
         for feature in data.get("features", []):
-            attributes = {aliases.get(name, name): value for name, value in feature.get("attributes", {}).items()}
+            raw = feature.get("attributes", {})
+            attributes = {aliases.get(name, name): value for name, value in raw.items()}
             geometry = feature.get("geometry")
             if geometry is not None:
                 # Query results carry the spatial reference once for the whole response;
                 # attach it to each geometry so the map can place the marker on its own.
                 geometry = {**geometry, "spatialReference": spatial_reference}
-            markers.append({"attributes": attributes, "geometry": geometry})
+            markers.append({"attributes": attributes, "geometry": geometry, "summary": self._summarize(raw)})
         return markers
+
+    @staticmethod
+    def _summarize(raw: Dict) -> Dict:
+        """The readable essentials of a marker, for the results table and lists.
+
+        {"number": "44 8601 1035", "route": "44", "county": "Ulster County", "region": 8,
+         "region_county_code": "86"}. Fields that can't be worked out are None.
+        """
+        number = MarkerNumber.from_stored(raw.get("REFERENCE_MARKER_PANEL"))
+        code = raw.get("REGION_COUNTY_CODE") or (number.digits[:2] if number else None)
+        place = RegionCountyCodes.lookup(code)
+        return {
+            "number": number.display if number else (raw.get("REFERENCE_MARKER_PANEL") or "").strip() or None,
+            "route": number.route if number else None,
+            "county": place.county if place else None,
+            "region": place.region if place else None,
+            "region_county_code": place.code if place else (str(code).strip() if code else None),
+        }
 
 
 @dataclass

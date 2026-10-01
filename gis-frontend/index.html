@@ -178,6 +178,11 @@
             min-height: 1.3em; /* same as one line of details, so the list doesn't jump when they arrive */
         }
 
+        .number-cell {
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+
         .distance-cell {
             font-variant-numeric: tabular-nums;
             white-space: nowrap;
@@ -1041,6 +1046,26 @@
             }
         }
 
+        // The readable essentials the backend adds to each marker (number, route, county, region)
+        function markerSummary(item) {
+            return item.summary || { number: (item.attributes['Reference Marker Number'] || '').trim() || null };
+        }
+
+        // Everything shown under Details: the readable summary first, then every field
+        // exactly as the NYSDOT service provides it
+        function detailsFor(item) {
+            const summary = markerSummary(item);
+            const details = {};
+            if (item.distance_miles !== null && item.distance_miles !== undefined) {
+                details['Distance'] = formatDistance(item.distance_miles);
+            }
+            details['Marker Number'] = summary.number ?? '—';
+            details['Route'] = summary.route ?? '—';
+            details['County'] = summary.county ?? '—';
+            details['NYSDOT Region'] = summary.region ?? '—';
+            return { ...details, ...item.attributes };
+        }
+
         // "420 ft" under a tenth of a mile, otherwise "0.32 mi"
         function formatDistance(miles) {
             if (miles === null || miles === undefined) return '—';
@@ -1073,79 +1098,59 @@
                 ? `${data.length} records found. Part of the search timed out, so some markers may be missing; search again for a complete list.`
                 : `${data.length} records found`;
 
-            // Extract the 'attributes' child object from each item for the table rows.
-            // Rows arrive sorted closest first; their distance is kept alongside.
-            const tableRows = data.map(item => item.attributes);
-            const distances = data.map(item => item.distance_miles);
-            const showDistance = distances.some(d => d !== null && d !== undefined);
+            // The table shows each marker's essentials; everything else is under Details.
+            // Rows arrive sorted closest first.
+            const showDistance = data.some(item => item.distance_miles !== null && item.distance_miles !== undefined);
+            const columns = [
+                ...(showDistance ? [{ label: 'Distance', className: 'distance-cell', value: item => formatDistance(item.distance_miles),
+                                      title: 'Ground distance from the search location' }] : []),
+                { label: 'Marker Number', className: 'number-cell', value: item => markerSummary(item).number },
+                { label: 'Route', value: item => markerSummary(item).route },
+                { label: 'County', value: item => markerSummary(item).county },
+            ];
 
-            // Fields to filter out as they are always null
-            const fieldsToIgnore = ['reverse overlap feature', 'continuity code', 'route sequence number'];
-
-            // Headers
-            const allCols = Object.keys(tableRows[0]);
-            const cols = allCols.filter(col => !fieldsToIgnore.includes(col));
-            
-            if (showDistance) {
+            columns.forEach(column => {
                 const th = document.createElement('th');
-                th.innerText = 'Distance';
-                th.title = 'Ground distance from the search location';
-                head.appendChild(th);
-            }
-            cols.forEach(col => {
-                const th = document.createElement('th');
-                th.innerText = col;
+                th.innerText = column.label;
+                if (column.title) th.title = column.title;
                 head.appendChild(th);
             });
-            
-            // Add custom action column header
             const actionTh = document.createElement('th');
-            actionTh.innerText = "Actions";
+            actionTh.innerText = 'Actions';
             head.appendChild(actionTh);
 
-            // Rows
-            tableRows.forEach((row, rowIndex) => {
+            data.forEach(item => {
+                const objectId = item.attributes.OBJECTID;
                 const tr = document.createElement('tr');
-                tr.id = `row-${row.OBJECTID}`;
-                
-                // When clicking a row, also highlight the pin on the map by panning to it!
+                tr.id = `row-${objectId}`;
+
+                // Clicking a row highlights it and pans the map to its pin
                 tr.onclick = () => {
-                    highlightTableRow(row.OBJECTID);
-                    // Optionally find graphic on map and pan view
-                    const graphics = graphicsLayer.graphics.toArray();
-                    const match = graphics.find(g => g.attributes && g.attributes.OBJECTID === row.OBJECTID);
+                    highlightTableRow(objectId);
+                    const match = graphicsLayer.graphics.toArray().find(g => g.attributes && g.attributes.OBJECTID === objectId);
                     if (match && mapView) {
                         mapView.goTo({ target: match, zoom: mapView.zoom });
                     }
                 };
-                
-                if (showDistance) {
+
+                columns.forEach(column => {
                     const td = document.createElement('td');
-                    td.className = 'distance-cell';
-                    td.innerText = formatDistance(distances[rowIndex]);
-                    tr.appendChild(td);
-                }
-                cols.forEach(col => {
-                    const td = document.createElement('td');
-                    td.innerText = row[col] !== null ? row[col] : 'Null';
+                    if (column.className) td.className = column.className;
+                    td.innerText = column.value(item) ?? '—';
                     tr.appendChild(td);
                 });
-                
-                // Append action button column cell
+
                 const actionTd = document.createElement('td');
                 const viewBtn = document.createElement('button');
-                viewBtn.innerText = "Details";
-                viewBtn.className = "action-btn";
-                
-                // Open Details Modal when clicked
+                viewBtn.innerText = 'Details';
+                viewBtn.className = 'action-btn';
                 viewBtn.onclick = (e) => {
-                    e.stopPropagation(); // Prevent the parent row click from panning map
-                    openDetailsModal(row);
+                    e.stopPropagation(); // don't also pan the map
+                    openDetailsModal(detailsFor(item));
                 };
-                
                 actionTd.appendChild(viewBtn);
                 tr.appendChild(actionTd);
-                
+
                 body.appendChild(tr);
             });
         }
@@ -1245,7 +1250,10 @@
                 appendMarkerNumber(text, marker.number, typedDigits);
                 const context = document.createElement('span');
                 context.className = 'suggestion-context';
-                context.textContent = `Route ${marker.number.split(' ')[0]} reference marker`;
+                const summary = marker.summary || {};
+                context.textContent = summary.county
+                    ? `${summary.county} · NYSDOT Region ${summary.region}`
+                    : `Route ${marker.number.split(' ')[0]}`;
                 body.append(text, context);
                 item.append(icon, body);
                 item.onclick = () => showMarker(marker);
