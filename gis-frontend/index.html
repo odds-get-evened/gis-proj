@@ -178,6 +178,48 @@
             min-height: 1.3em; /* same as one line of details, so the list doesn't jump when they arrive */
         }
 
+        .radius-control {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 10px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+        .radius-options {
+            display: flex;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .radius-options button {
+            background: #FFFFFF;
+            color: var(--text-main);
+            border: none;
+            border-left: 1px solid var(--border);
+            padding: 4px 10px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .radius-options button:first-child {
+            border-left: none;
+        }
+        .radius-options button[aria-checked="true"] {
+            background: var(--primary);
+            color: #FFFFFF;
+        }
+        .widen-btn {
+            margin-top: 12px;
+            background: var(--primary);
+            color: #FFFFFF;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
         .number-cell {
             font-variant-numeric: tabular-nums;
             white-space: nowrap;
@@ -480,6 +522,10 @@
                        role="combobox" aria-autocomplete="list" aria-controls="suggestions" aria-expanded="false">
                 <button onclick="search()">Search</button>
             </div>
+            <div class="radius-control">
+                <span class="radius-label" id="radiusLabel">Search radius</span>
+                <div class="radius-options" id="radiusOptions" role="radiogroup" aria-labelledby="radiusLabel"></div>
+            </div>
             <div id="loader" class="loader"></div>
         </div>
 
@@ -614,7 +660,7 @@
 
             /** Resolves with { markers, isPartial, searchArea }. isPartial means some results may be
              *  missing; searchArea is the searched circle (a polygon in latitude/longitude). */
-            async identify(point, sr, radiusMiles = 0.5) {
+            async identify(point, sr, radiusMiles) {
                 const response = await this.postJson('/identify', { point, sr, radius_miles: radiusMiles });
                 const body = await response.json();
                 return { markers: body.markers, isPartial: body.is_partial, searchArea: body.search_area };
@@ -622,6 +668,95 @@
         }
 
         const api = new BackendApi('http://127.0.0.1:8000');
+
+        /**
+         * Finds the markers around a location at the chosen search radius. It remembers
+         * the location, so changing the radius searches the same spot again.
+         */
+        class NearbyMarkerSearch {
+            static RADIUS_OPTIONS = [
+                { miles: 0.25, label: '¼ mi', words: 'a quarter mile' },
+                { miles: 0.5, label: '½ mi', words: 'half a mile' },
+                { miles: 1, label: '1 mi', words: '1 mile' }
+            ];
+
+            constructor(optionsContainer) {
+                this.radiusMiles = 0.5;
+                this.center = null; // the last search: { point, sr, pin, highlightObjectId }
+                this.runId = 0;     // a newer search makes an older one's results irrelevant
+                this.optionsContainer = optionsContainer;
+                this.renderRadiusOptions();
+            }
+
+            get radiusOption() {
+                return NearbyMarkerSearch.RADIUS_OPTIONS.find(o => o.miles === this.radiusMiles);
+            }
+
+            // The next larger radius, offered when nothing is found (null at the largest)
+            get widerOption() {
+                return NearbyMarkerSearch.RADIUS_OPTIONS.find(o => o.miles > this.radiusMiles) || null;
+            }
+
+            // center: { point, sr, pin: { geometry, color, size }, highlightObjectId (optional) }
+            async search(center) {
+                this.center = center;
+                await this.run();
+            }
+
+            async setRadius(miles) {
+                if (miles === this.radiusMiles) return;
+                this.radiusMiles = miles;
+                this.renderRadiusOptions();
+                if (this.center) await this.run();
+            }
+
+            async run() {
+                const center = this.center;
+                const runId = ++this.runId;
+                showLoading(true);
+                try {
+                    graphicsLayer.removeAll();
+                    graphicsLayer.add(new mapGraphic({
+                        geometry: center.pin.geometry,
+                        symbol: {
+                            type: "simple-marker",
+                            color: center.pin.color,
+                            size: center.pin.size,
+                            outline: { color: "#FFFFFF", width: 2 }
+                        }
+                    }));
+
+                    const { markers, isPartial, searchArea } = await api.identify(center.point, center.sr, this.radiusMiles);
+                    if (runId !== this.runId) return; // the radius changed or a new search started meanwhile
+
+                    plotMarkersOnMap(markers, searchArea);
+                    renderTable(markers, isPartial, this);
+                    if (center.highlightObjectId !== undefined) highlightTableRow(center.highlightObjectId);
+                } catch (error) {
+                    if (runId !== this.runId) return;
+                    console.error('Error:', error);
+                    alert(error.message);
+                } finally {
+                    if (runId === this.runId) showLoading(false);
+                }
+            }
+
+            renderRadiusOptions() {
+                this.optionsContainer.innerHTML = '';
+                NearbyMarkerSearch.RADIUS_OPTIONS.forEach(option => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.textContent = option.label;
+                    button.title = `Search within ${option.words}`;
+                    button.setAttribute('role', 'radio');
+                    button.setAttribute('aria-checked', option.miles === this.radiusMiles ? 'true' : 'false');
+                    button.onclick = () => this.setRadius(option.miles);
+                    this.optionsContainer.appendChild(button);
+                });
+            }
+        }
+
+        const nearbySearch = new NearbyMarkerSearch(document.getElementById('radiusOptions'));
 
         let currentSuggestions = [];
         let suggestionDetails = [];     // details per suggestion index, once looked up
@@ -669,43 +804,13 @@
                     return;
                 }
 
-                // Otherwise, empty map click identify flow:
-                showLoading(true);
+                // Otherwise, search around the clicked spot
                 const clickedPoint = event.mapPoint;
-                
-                // Clear previous graphics and add a pin at the clicked point
-                graphicsLayer.removeAll();
-                const centerPin = new mapGraphic({
-                    geometry: clickedPoint,
-                    symbol: {
-                        type: "simple-marker",
-                        color: "#4F46E5", // Deep Purple for click center
-                        size: "14px",
-                        outline: { color: "#FFFFFF", width: 2 }
-                    }
+                await nearbySearch.search({
+                    point: { x: clickedPoint.x, y: clickedPoint.y },
+                    sr: clickedPoint.spatialReference.wkid,
+                    pin: { geometry: clickedPoint, color: "#4F46E5", size: "14px" } // Deep Purple for a map click
                 });
-                graphicsLayer.add(centerPin);
-
-                try {
-                    // Identify markers near clicked coordinates
-                    const { markers, isPartial, searchArea } = await api.identify(
-                        { x: clickedPoint.x, y: clickedPoint.y },
-                        clickedPoint.spatialReference.wkid,
-                        0.5
-                    );
-                    
-                    // Plot reference markers on the map
-                    plotMarkersOnMap(markers, searchArea);
-                    
-                    // Populate the UI Table
-                    renderTable(markers, isPartial);
-                    
-                } catch (error) {
-                    console.error(error);
-                    alert(error.message);
-                } finally {
-                    showLoading(false);
-                }
             });
         });
 
@@ -825,27 +930,16 @@
             list.appendChild(item);
             currentSuggestions = [];
 
-            graphicsLayer.removeAll();
-            const targetPin = new mapGraphic({
-                // display_point is always latitude/longitude, which the map draws natively
-                geometry: {
-                    type: "point",
-                    x: result.display_point.x,
-                    y: result.display_point.y,
-                    spatialReference: { wkid: 4326 }
-                },
-                symbol: {
-                    type: "simple-marker",
-                    color: "#E11D48", // Rose Red for search target
-                    size: "14px",
-                    outline: { color: "#FFFFFF", width: 2 }
+            await nearbySearch.search({
+                point: result.point,
+                sr: result.sr,
+                pin: {
+                    // display_point is always latitude/longitude, which the map draws natively
+                    geometry: { type: "point", x: result.display_point.x, y: result.display_point.y, spatialReference: { wkid: 4326 } },
+                    color: "#E11D48", // Rose Red for a search target
+                    size: "14px"
                 }
             });
-            graphicsLayer.add(targetPin);
-
-            const { markers, isPartial, searchArea } = await api.identify(result.point, result.sr);
-            plotMarkersOnMap(markers, searchArea);
-            renderTable(markers, isPartial);
         }
 
         // The Search button (and Enter with nothing highlighted) search right away
@@ -1029,7 +1123,6 @@
         async function selectSuggestion(index) {
             showLoading(true);
             const suggestion = currentSuggestions[index];
-            const radius = 0.5; // default
             
             try {
                 // Use the location from the details lookup if it has arrived; otherwise geocode now
@@ -1042,41 +1135,45 @@
                     throw new Error('That location could not be found on the map. Please pick another suggestion.');
                 }
                 
-                // Clear map graphics
-                graphicsLayer.removeAll();
-
-                // Add search target pin (Rose Red)
-                const point = {
-                    type: "point",
-                    x: candidate.location.x,
-                    y: candidate.location.y,
-                    spatialReference: candidate.spatialReference
-                };
-                const targetPin = new mapGraphic({
-                    geometry: point,
-                    symbol: {
-                        type: "simple-marker",
-                        color: "#E11D48", // Rose Red for search target
-                        size: "14px",
-                        outline: { color: "#FFFFFF", width: 2 }
+                await nearbySearch.search({
+                    point: candidate.location,
+                    sr: candidate.spatialReference.wkid,
+                    pin: {
+                        geometry: { type: "point", ...candidate.location, spatialReference: candidate.spatialReference },
+                        color: "#E11D48", // Rose Red for a search target
+                        size: "14px"
                     }
                 });
-                graphicsLayer.add(targetPin);
-
-                // Identify
-                const { markers, isPartial, searchArea } = await api.identify(candidate.location, candidate.spatialReference.wkid);
-                
-                // Plot found reference markers on the map
-                plotMarkersOnMap(markers, searchArea);
-
-                // Populate UI Table
-                renderTable(markers, isPartial);
                 
             } catch (error) {
                 console.error('Error:', error);
                 alert(error.message);
             } finally {
                 showLoading(false);
+            }
+        }
+
+        // Empty results: say what was searched, and offer the next larger radius if there is one
+        function showNoMarkersFound(emptyState, search) {
+            emptyState.innerHTML = '';
+            const icon = document.createElement('div');
+            icon.className = 'empty-icon';
+            icon.textContent = '📍';
+            const heading = document.createElement('h3');
+            heading.textContent = `No reference markers within ${search.radiusOption.words}`;
+            const hint = document.createElement('p');
+            emptyState.append(icon, heading, hint);
+
+            const wider = search.widerOption;
+            if (wider) {
+                hint.textContent = 'Reference markers are only on state highways. Try a wider search, or pick a spot closer to a state route.';
+                const button = document.createElement('button');
+                button.className = 'widen-btn';
+                button.textContent = `Search within ${wider.words}`;
+                button.onclick = () => search.setRadius(wider.miles);
+                emptyState.appendChild(button);
+            } else {
+                hint.textContent = 'Reference markers are only on state highways. Try a spot closer to a state route.';
             }
         }
 
@@ -1107,7 +1204,7 @@
             return `${miles.toFixed(2)} mi`;
         }
 
-        function renderTable(data, isPartial = false) {
+        function renderTable(data, isPartial = false, search = null) {
             const head = document.getElementById('tableHead');
             const body = document.getElementById('tableBody');
             const emptyState = document.getElementById('emptyState');
@@ -1117,20 +1214,24 @@
             head.innerHTML = '';
             body.innerHTML = '';
             
+            const within = search ? ` within ${search.radiusOption.words}` : '';
+
             if (!data || data.length === 0) {
                 emptyState.style.display = 'flex';
                 table.style.display = 'none';
                 count.innerText = isPartial
-                    ? '0 records found. Part of the search timed out; search again for a complete list.'
-                    : '0 records found';
+                    ? '0 markers found. Part of the search timed out; search again for a complete list.'
+                    : `0 markers found${within}`;
+                if (search) showNoMarkersFound(emptyState, search);
                 return;
             }
 
             emptyState.style.display = 'none';
             table.style.display = 'table';
+            const found = `${data.length} marker${data.length === 1 ? '' : 's'} found${within}`;
             count.innerText = isPartial
-                ? `${data.length} records found. Part of the search timed out, so some markers may be missing; search again for a complete list.`
-                : `${data.length} records found`;
+                ? `${found}. Part of the search timed out, so some markers may be missing; search again for a complete list.`
+                : found;
 
             // The table shows each marker's essentials; everything else is under Details.
             // Rows arrive sorted closest first.
@@ -1332,31 +1433,14 @@
         // Shows one reference marker: a red ring around its pin, the markers near it,
         // and its row highlighted in the table
         async function showMarker(marker) {
-            showLoading(true);
-            try {
-                graphicsLayer.removeAll();
-                const point = { x: marker.geometry.x, y: marker.geometry.y };
-                const spatialReference = marker.geometry.spatialReference;
-                graphicsLayer.add(new mapGraphic({
-                    geometry: { type: "point", ...point, spatialReference },
-                    symbol: {
-                        type: "simple-marker",
-                        color: "#E11D48", // Rose Red for the searched marker; its green pin is drawn on top
-                        size: "18px",
-                        outline: { color: "#FFFFFF", width: 2 }
-                    }
-                }));
-
-                const { markers, isPartial, searchArea } = await api.identify(point, spatialReference.wkid);
-                plotMarkersOnMap(markers, searchArea);
-                renderTable(markers, isPartial);
-                highlightTableRow(marker.attributes.OBJECTID);
-            } catch (error) {
-                console.error('Error:', error);
-                alert(error.message);
-            } finally {
-                showLoading(false);
-            }
+            const { x, y, spatialReference } = marker.geometry;
+            await nearbySearch.search({
+                point: { x, y },
+                sr: spatialReference.wkid,
+                // A larger red pin drawn beneath the marker's own green pin shows as a ring around it
+                pin: { geometry: { type: "point", x, y, spatialReference }, color: "#E11D48", size: "18px" },
+                highlightObjectId: marker.attributes.OBJECTID
+            });
         }
 
         // A short note in place of the suggestion list (e.g. a problem found while typing)

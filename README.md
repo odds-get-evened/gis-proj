@@ -54,7 +54,10 @@ An internet connection is required, because the app looks up addresses and refer
 
 ## Using the App
 
-The app shows the NYSDOT reference markers within **half a mile** of any location in New York State. There are three ways to pick a location.
+The app shows the NYSDOT reference markers near any location in New York State: within **half a mile** by default. There are several ways to pick a location, described below.
+
+### Choosing the search radius
+Use the **Search radius** switch under the search box to search within **¼ mile**, **½ mile** or **1 mile**. Changing it re-searches the current location straight away, so you can widen or narrow a search without searching again. If no markers are found, the results area says so and offers a one-click wider search (for example **Search within half a mile**).
 
 ### Search by address or place
 1. Start typing an address, road, intersection, city or county into the search box, for example `5700 Route 44 55, Kerhonkson, NY`. Suggestions appear as soon as you pause (after at least three characters); you can also press **Enter** or click **Search** to look right away.
@@ -115,8 +118,9 @@ Click anywhere on the map to see the markers around that spot.
 
 - Click **Details** on a row for everything about that marker: the summary above plus its NYSDOT region, followed by every field exactly as the NYSDOT service provides it.
 - The table lists markers **closest first**. The **Distance** column shows the ground distance from your search location: feet under a tenth of a mile (e.g. *420 ft*), miles beyond (e.g. *0.32 mi*). When you search for a marker by number, distances are measured from that marker, so it appears first at *0 ft*.
-- The **red pin** marks your search location, and **green pins** are the reference markers found.
-- The **dashed circle** shows the area searched: everything within half a mile of your search location.
+- The **red pin** marks your search location (**purple** when you clicked the map), and **green pins** are the reference markers found.
+- The results count above the table says how many markers were found and within what distance (e.g. *10 markers found within 1 mile*).
+- The **dashed circle** shows the area searched: everything within the chosen radius of your search location.
 - Each green pin is labeled with the **last line of its marker number** (e.g. *1035*), the part that differs between neighboring markers on a route. When the results include more than one route, the label adds the route (e.g. *44 · 1035*). Click a pin to see its full number and county.
 - Clicking a green pin highlights its row in the **Reference Marker Details** table; clicking a row moves the map to its pin.
 

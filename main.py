@@ -104,7 +104,8 @@ class SuggestionDetailsRequest(BaseModel):
 class IdentifyRequest(BaseModel):
     point: Dict[str, float]
     sr: int
-    radius_miles: float = 0.5
+    # The app offers 1/4, 1/2 and 1 mile; anything over 1 mile is refused
+    radius_miles: float = Field(0.5, gt=0, le=1)
 
 @app.get("/health")
 def health():

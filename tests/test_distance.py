@@ -130,3 +130,36 @@ class FindNearbySearchAreaTests(unittest.TestCase):
         mock_get.return_value = arcgis_response(layer_with())
 
         self.assertIsNone(ReferenceMarkerService().find_nearby({"x": 1, "y": 2}, 2263).search_area)
+
+
+@patch("gis_pipeline.requests.Session.get")
+class RadiusTests(unittest.TestCase):
+    def setUp(self):
+        from fastapi.testclient import TestClient
+        import main
+        self.client = TestClient(main.app)
+
+    def test_each_offered_radius_is_used_for_the_search_and_the_circle(self, mock_get):
+        for miles in (0.25, 0.5, 1):
+            mock_get.reset_mock()
+            mock_get.return_value = arcgis_response(layer_with())
+
+            body = self.client.post("/identify", json={"point": {"x": CENTER_UTM[0], "y": CENTER_UTM[1]},
+                                                       "sr": 26918, "radius_miles": miles}).json()
+
+            self.assertTrue(all(c.kwargs["params"]["distance"] == miles for c in mock_get.call_args_list))
+            lon, lat = body["search_area"]["rings"][0][0]
+            self.assertAlmostEqual(Geodesy.distance_miles(CENTER_LAT_LON, (lat, lon)), miles, delta=1e-4)
+
+    def test_radius_defaults_to_half_a_mile(self, mock_get):
+        mock_get.return_value = arcgis_response(layer_with())
+
+        self.client.post("/identify", json={"point": {"x": 1, "y": 2}, "sr": 26918})
+
+        self.assertEqual(mock_get.call_args.kwargs["params"]["distance"], 0.5)
+
+    def test_unreasonable_radii_are_refused(self, mock_get):
+        for miles in (0, -1, 1.5, 50):
+            response = self.client.post("/identify", json={"point": {"x": 1, "y": 2}, "sr": 26918, "radius_miles": miles})
+            self.assertEqual(response.status_code, 422, miles)
+        mock_get.assert_not_called()
