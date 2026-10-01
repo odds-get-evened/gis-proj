@@ -6,7 +6,7 @@ from dataclasses import asdict
 from typing import Dict, List
 
 import uvicorn
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -29,7 +29,6 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Partial-Results"],  # lets the frontend read it
 )
 
 orchestrator = PipelineOrchestrator()
@@ -174,16 +173,17 @@ def geocode_location(request: GeocodeRequest):
     return orchestrator.geocoder.geocode(request.magic_key)
 
 @app.post("/identify")
-def identify_marker(request: IdentifyRequest, response: Response):
-    """Returns the unique reference markers within radius_miles of the point.
+def identify_marker(request: IdentifyRequest):
+    """Finds the reference markers within radius_miles of the point.
 
-    Sets the X-Partial-Results header when part of the search failed, so the
-    list may be incomplete.
+    Returns {"markers": [...], "is_partial": bool, "search_area": polygon or null}.
+    Markers are sorted closest first, each with distance_miles and a readable summary.
+    is_partial means part of the search failed, so the list may be incomplete.
+    search_area is the searched circle as an ArcGIS polygon in latitude/longitude.
     """
     result = orchestrator.marker_service.find_nearby(request.point, request.sr, request.radius_miles)
-    if result.is_partial:
-        response.headers["X-Partial-Results"] = "true"
-    return result.markers
+    return {"markers": result.markers, "is_partial": result.is_partial, "search_area": result.search_area}
+
 
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="NYS GIS Lookup backend")

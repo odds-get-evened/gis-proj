@@ -85,9 +85,48 @@ class FindNearbyDistanceTests(unittest.TestCase):
 
         body = TestClient(main.app).post("/identify", json={"point": {"x": CENTER_UTM[0], "y": CENTER_UTM[1]}, "sr": 26918}).json()
 
-        self.assertEqual([m["attributes"]["OBJECTID"] for m in body], [1, 2, 3, 9])
-        self.assertAlmostEqual(body[0]["distance_miles"], POINTS[0][4], delta=1e-4)
+        self.assertEqual([m["attributes"]["OBJECTID"] for m in body["markers"]], [1, 2, 3, 9])
+        self.assertAlmostEqual(body["markers"][0]["distance_miles"], POINTS[0][4], delta=1e-4)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SearchAreaTests(unittest.TestCase):
+    def test_circle_points_are_the_radius_from_the_center(self):
+        ring = Geodesy.circle(CENTER_LAT_LON, 0.5)
+        self.assertEqual(len(ring), 73)
+        self.assertEqual(ring[0], ring[-1])  # closed
+        for lon, lat in ring:
+            # 2e-5 miles is about 1.3 inches
+            self.assertAlmostEqual(Geodesy.distance_miles(CENTER_LAT_LON, (lat, lon)), 0.5, delta=2e-5)
+
+    def test_circle_starts_due_north_and_runs_clockwise(self):
+        ring = Geodesy.circle(CENTER_LAT_LON, 0.5)
+        (lon_n, lat_n), (lon_e, lat_e) = ring[0], ring[18]  # 0 and 90 degrees
+        self.assertAlmostEqual(lon_n, CENTER_LAT_LON[1], places=9)
+        self.assertGreater(lat_n, CENTER_LAT_LON[0])
+        self.assertAlmostEqual(lat_e, CENTER_LAT_LON[0], places=9)
+        self.assertGreater(lon_e, CENTER_LAT_LON[1])
+
+
+@patch("gis_pipeline.requests.Session.get")
+class FindNearbySearchAreaTests(unittest.TestCase):
+    def test_search_area_is_centered_on_the_search_point(self, mock_get):
+        mock_get.return_value = arcgis_response(layer_with())
+
+        area = ReferenceMarkerService().find_nearby({"x": CENTER_UTM[0], "y": CENTER_UTM[1]}, 26918, radius_miles=0.5).search_area
+
+        self.assertEqual(area["spatialReference"], {"wkid": 4326})
+        ring = area["rings"][0]
+        lons, lats = [p[0] for p in ring], [p[1] for p in ring]
+        self.assertAlmostEqual((min(lats) + max(lats)) / 2, CENTER_LAT_LON[0], places=5)
+        self.assertAlmostEqual((min(lons) + max(lons)) / 2, CENTER_LAT_LON[1], places=5)
+        for lon, lat in ring:
+            self.assertAlmostEqual(Geodesy.distance_miles(CENTER_LAT_LON, (lat, lon)), 0.5, delta=1e-4)
+
+    def test_unsupported_spatial_reference_has_no_search_area(self, mock_get):
+        mock_get.return_value = arcgis_response(layer_with())
+
+        self.assertIsNone(ReferenceMarkerService().find_nearby({"x": 1, "y": 2}, 2263).search_area)

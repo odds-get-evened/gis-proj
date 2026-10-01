@@ -5,7 +5,7 @@ Web Mercator (map clicks, geocoder results, marker geometries) or UTM zone 18N
 (typed coordinates). Each is converted to latitude/longitude first.
 """
 import math
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from utm_projection import UTM_ZONE_18N
 
@@ -58,6 +58,32 @@ class Geodesy:
         north = math.radians(lat2 - lat1) * meridional_radius
         east = math.radians(lon2 - lon1) * prime_vertical_radius * math.cos(mean_lat)
         return math.hypot(north, east) / cls.METERS_PER_MILE
+
+    @classmethod
+    def circle(cls, center: LatLon, radius_miles: float, segments: int = 72) -> List[List[float]]:
+        """A closed ring of [longitude, latitude] points radius_miles from center on the ground.
+
+        Uses the ellipsoid's radii of curvature at the center's latitude. For a half-mile
+        circle every point is within about an inch of radius_miles from the center, both
+        by distance_miles and by a full geodesic calculation.
+        """
+        lat0, lon0 = center
+        lat_rad = math.radians(lat0)
+        e2, axis = cls.ECCENTRICITY_SQUARED, cls.SEMI_MAJOR_AXIS_M
+        denominator = 1 - e2 * math.sin(lat_rad) ** 2
+        meridional_radius = axis * (1 - e2) / denominator ** 1.5
+        prime_vertical_radius = axis / math.sqrt(denominator)
+        radius_m = radius_miles * cls.METERS_PER_MILE
+
+        ring = []
+        for i in range(segments):
+            bearing = 2 * math.pi * i / segments  # clockwise from north
+            north, east = radius_m * math.cos(bearing), radius_m * math.sin(bearing)
+            lat = lat0 + math.degrees(north / meridional_radius)
+            lon = lon0 + math.degrees(east / (prime_vertical_radius * math.cos(lat_rad)))
+            ring.append([lon, lat])
+        ring.append(list(ring[0]))  # close the ring
+        return ring
 
 
 def wkid_of(spatial_reference: Optional[Dict]) -> Optional[int]:

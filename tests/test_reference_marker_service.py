@@ -88,9 +88,11 @@ class IdentifyEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(len(body), 1)
-        self.assertEqual(body[0]["attributes"]["OBJECTID"], 3)
-        self.assertIn("geometry", body[0])
+        self.assertEqual(len(body["markers"]), 1)
+        self.assertEqual(body["markers"][0]["attributes"]["OBJECTID"], 3)
+        self.assertIn("geometry", body["markers"][0])
+        self.assertFalse(body["is_partial"])
+        self.assertEqual(body["search_area"]["spatialReference"], {"wkid": 4326})
 
 
 if __name__ == "__main__":

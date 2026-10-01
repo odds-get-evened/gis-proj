@@ -612,13 +612,12 @@
                 return response.json();
             }
 
-            /** Resolves with { markers, isPartial }; isPartial means some results may be missing. */
+            /** Resolves with { markers, isPartial, searchArea }. isPartial means some results may be
+             *  missing; searchArea is the searched circle (a polygon in latitude/longitude). */
             async identify(point, sr, radiusMiles = 0.5) {
                 const response = await this.postJson('/identify', { point, sr, radius_miles: radiusMiles });
-                return {
-                    markers: await response.json(),
-                    isPartial: response.headers.get('X-Partial-Results') === 'true'
-                };
+                const body = await response.json();
+                return { markers: body.markers, isPartial: body.is_partial, searchArea: body.search_area };
             }
         }
 
@@ -689,14 +688,14 @@
 
                 try {
                     // Identify markers near clicked coordinates
-                    const { markers, isPartial } = await api.identify(
+                    const { markers, isPartial, searchArea } = await api.identify(
                         { x: clickedPoint.x, y: clickedPoint.y },
                         clickedPoint.spatialReference.wkid,
                         0.5
                     );
                     
                     // Plot reference markers on the map
-                    plotMarkersOnMap(markers);
+                    plotMarkersOnMap(markers, searchArea);
                     
                     // Populate the UI Table
                     renderTable(markers, isPartial);
@@ -728,42 +727,77 @@
         }
 
         // Helper to plot the found reference markers on the map
-        function plotMarkersOnMap(results) {
+        // Draws the searched area, then each marker as a green pin labeled with its number.
+        // Pins along a route are about a tenth of a mile apart, so labels show the panel's
+        // bottom line (the sequence, e.g. "1035"), which is what differs between neighbors;
+        // when the results span several routes the route is added ("44 · 1035").
+        function plotMarkersOnMap(results, searchArea = null) {
             if (!mapView || !graphicsLayer || !mapGraphic) return;
 
-            // Plot each identified reference marker
+            if (searchArea) {
+                // Underneath everything else, including the red search pin
+                graphicsLayer.graphics.add(new mapGraphic({
+                    geometry: { type: "polygon", rings: searchArea.rings, spatialReference: searchArea.spatialReference },
+                    symbol: {
+                        type: "simple-fill",
+                        color: [79, 70, 229, 0.06],
+                        outline: { color: [79, 70, 229, 0.8], width: 1.5, style: "dash" }
+                    }
+                }), 0);
+            }
+
+            const routes = new Set(results.map(r => r.summary && r.summary.route).filter(Boolean));
+            const labelFor = result => {
+                const summary = result.summary;
+                if (!summary || !summary.number) return null;
+                const sequence = summary.number.split(' ').pop();
+                return routes.size > 1 ? `${summary.route} · ${sequence}` : sequence;
+            };
+
             results.forEach(result => {
                 if (!result.geometry) return;
-                
-                // ArcGIS point configuration
                 const markerPoint = {
                     type: "point",
                     x: result.geometry.x,
                     y: result.geometry.y,
                     spatialReference: result.geometry.spatialReference
                 };
+                const summary = result.summary || {};
 
-                const markerSymbol = {
-                    type: "simple-marker",
-                    color: "#10B981", // Emerald Green for identified reference markers
-                    size: "10px",
-                    outline: { color: "#FFFFFF", width: 1.5 }
-                };
-
-                const graphic = new mapGraphic({
+                graphicsLayer.add(new mapGraphic({
                     geometry: markerPoint,
-                    symbol: markerSymbol,
-                    attributes: result.attributes,
+                    symbol: {
+                        type: "simple-marker",
+                        color: "#10B981", // Emerald Green for reference markers
+                        size: "10px",
+                        outline: { color: "#FFFFFF", width: 1.5 }
+                    },
+                    attributes: { ...result.attributes, number: summary.number || '', county: summary.county || '' },
                     popupTemplate: {
-                        title: "Reference Marker",
-                        content: `<b>Marker Number:</b> {Reference Marker Number}<br><b>Object ID:</b> {OBJECTID}`
+                        title: "Reference Marker {number}",
+                        content: "{county}"
                     }
-                });
+                }));
 
-                graphicsLayer.add(graphic);
+                const label = labelFor(result);
+                if (label) {
+                    // A separate text graphic just above the pin (no attributes, so clicks still find the pin)
+                    graphicsLayer.add(new mapGraphic({
+                        geometry: markerPoint,
+                        symbol: {
+                            type: "text",
+                            text: label,
+                            color: "#065F46",
+                            haloColor: "#FFFFFF",
+                            haloSize: 1.5,
+                            yoffset: 9,
+                            font: { size: 9, weight: "bold", family: "sans-serif" }
+                        }
+                    }));
+                }
             });
 
-            // Auto-Zoom to Fit all plotted markers cleanly on screen
+            // Zoom to fit the search area (or, without one, all the markers)
             if (graphicsLayer.graphics.length > 0) {
                 mapView.goTo(graphicsLayer.graphics.toArray(), {
                     animate: true,
@@ -809,8 +843,8 @@
             });
             graphicsLayer.add(targetPin);
 
-            const { markers, isPartial } = await api.identify(result.point, result.sr);
-            plotMarkersOnMap(markers);
+            const { markers, isPartial, searchArea } = await api.identify(result.point, result.sr);
+            plotMarkersOnMap(markers, searchArea);
             renderTable(markers, isPartial);
         }
 
@@ -1030,10 +1064,10 @@
                 graphicsLayer.add(targetPin);
 
                 // Identify
-                const { markers, isPartial } = await api.identify(candidate.location, candidate.spatialReference.wkid);
+                const { markers, isPartial, searchArea } = await api.identify(candidate.location, candidate.spatialReference.wkid);
                 
                 // Plot found reference markers on the map
-                plotMarkersOnMap(markers);
+                plotMarkersOnMap(markers, searchArea);
 
                 // Populate UI Table
                 renderTable(markers, isPartial);
@@ -1313,8 +1347,8 @@
                     }
                 }));
 
-                const { markers, isPartial } = await api.identify(point, spatialReference.wkid);
-                plotMarkersOnMap(markers);
+                const { markers, isPartial, searchArea } = await api.identify(point, spatialReference.wkid);
+                plotMarkersOnMap(markers, searchArea);
                 renderTable(markers, isPartial);
                 highlightTableRow(marker.attributes.OBJECTID);
             } catch (error) {

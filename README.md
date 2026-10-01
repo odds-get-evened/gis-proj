@@ -116,6 +116,8 @@ Click anywhere on the map to see the markers around that spot.
 - Click **Details** on a row for everything about that marker: the summary above plus its NYSDOT region, followed by every field exactly as the NYSDOT service provides it.
 - The table lists markers **closest first**. The **Distance** column shows the ground distance from your search location: feet under a tenth of a mile (e.g. *420 ft*), miles beyond (e.g. *0.32 mi*). When you search for a marker by number, distances are measured from that marker, so it appears first at *0 ft*.
 - The **red pin** marks your search location, and **green pins** are the reference markers found.
+- The **dashed circle** shows the area searched: everything within half a mile of your search location.
+- Each green pin is labeled with the **last line of its marker number** (e.g. *1035*), the part that differs between neighboring markers on a route. When the results include more than one route, the label adds the route (e.g. *44 · 1035*). Click a pin to see its full number and county.
 - Clicking a green pin highlights its row in the **Reference Marker Details** table; clicking a row moves the map to its pin.
 
 ---

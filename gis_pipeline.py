@@ -269,6 +269,8 @@ class NearbyMarkers:
     """
     markers: List[Dict] = field(default_factory=list)
     is_partial: bool = False
+    # The area searched, as an ArcGIS polygon in latitude/longitude, for drawing on the map
+    search_area: Optional[Dict] = None
 
 
 class ReferenceMarkerService(ArcGISClient):
@@ -311,7 +313,19 @@ class ReferenceMarkerService(ArcGISClient):
             "outSR": out_sr,
         }
         markers, is_partial = self._query_all_layers(params)
-        return NearbyMarkers(markers=self._sorted_by_distance(markers, point, sr), is_partial=is_partial)
+        return NearbyMarkers(
+            markers=self._sorted_by_distance(markers, point, sr),
+            is_partial=is_partial,
+            search_area=self._search_area(point, sr, radius_miles),
+        )
+
+    @staticmethod
+    def _search_area(point: Dict, sr: int, radius_miles: float) -> Optional[Dict]:
+        """The searched circle as an ArcGIS polygon in WGS 84, or None if point can't be converted."""
+        center = Geodesy.point_to_lat_lon(point, sr)
+        if center is None:
+            return None
+        return {"rings": [Geodesy.circle(center, radius_miles)], "spatialReference": {"wkid": 4326}}
 
     @staticmethod
     def _sorted_by_distance(markers: List[Dict], point: Dict, sr: int) -> List[Dict]:

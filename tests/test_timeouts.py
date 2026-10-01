@@ -150,16 +150,14 @@ class ApiErrorResponseTests(unittest.TestCase):
         response = self.client.post("/identify", json={"point": {"x": 1, "y": 2}, "sr": 26918})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers.get("X-Partial-Results"), "true")
+        self.assertTrue(response.json()["is_partial"])
 
-    def test_partial_header_is_readable_cross_origin(self, mock_get, _sleep):
+    def test_complete_results_are_not_partial(self, mock_get, _sleep):
         mock_get.return_value = arcgis_response(layer_body())
 
-        response = self.client.post(
-            "/identify", json={"point": {"x": 1, "y": 2}, "sr": 26918}, headers={"Origin": "null"}
-        )
+        response = self.client.post("/identify", json={"point": {"x": 1, "y": 2}, "sr": 26918})
 
-        self.assertIn("x-partial-results", response.headers.get("access-control-expose-headers", "").lower())
+        self.assertFalse(response.json()["is_partial"])
 
 
 class SlowHandler(BaseHTTPRequestHandler):
