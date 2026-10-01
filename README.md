@@ -104,6 +104,7 @@ The numbers can be separated by a comma, a semicolon or spaces, and degree signs
 Click anywhere on the map to see the markers around that spot.
 
 ### Reading the results
+- The table lists markers **closest first**. The **Distance** column shows the ground distance from your search location: feet under a tenth of a mile (e.g. *420 ft*), miles beyond (e.g. *0.32 mi*). When you search for a marker by number, distances are measured from that marker, so it appears first at *0 ft*.
 - The **red pin** marks your search location, and **green pins** are the reference markers found.
 - Clicking a green pin highlights its row in the **Reference Marker Details** table; clicking a row moves the map to its pin.
 - Click **Details** on any row to see every field for that marker.
@@ -160,6 +161,8 @@ The backend pipes queries through the core orchestrator engine in `gis_pipeline.
     - Input (Coordinates) -> Parse & Validate (`CoordinateParser`) -> Find Nearby Markers (MapServer query).
 
 The search box calls the backend's `/search` endpoint, which returns either parsed coordinates or address suggestions, so both kinds of input share one box. For UTM input, the backend also converts the point to latitude/longitude (`utm_projection.py`) so the map can draw the search pin without loading ArcGIS's projection engine; the marker search itself uses the original UTM values.
+
+Each marker's distance from the search location is calculated in the backend (`geodesy.py`): both points are converted to latitude/longitude, whatever spatial reference they arrived in, and measured on the WGS 84 ellipsoid (accurate to a fraction of an inch at these distances). Results are returned sorted closest first.
 
 Markers are found with a distance query: the NYSDOT service buffers the location by a true 0.5-mile radius in its own UTM 18N (meter) coordinate system, so the search area is an accurate circle whether the location arrives as lat/lon, UTM or Web Mercator. The service draws the same markers in nine scale-dependent sub-layers; all are queried in parallel and duplicates are removed by `OBJECTID`.
 

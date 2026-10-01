@@ -178,6 +178,12 @@
             min-height: 1.3em; /* same as one line of details, so the list doesn't jump when they arrive */
         }
 
+        .distance-cell {
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+            font-weight: 600;
+        }
+
         .suggestion-item.active {
             border-color: var(--primary);
             background-color: #EEF2FF;
@@ -1035,6 +1041,13 @@
             }
         }
 
+        // "420 ft" under a tenth of a mile, otherwise "0.32 mi"
+        function formatDistance(miles) {
+            if (miles === null || miles === undefined) return '—';
+            if (miles < 0.1) return `${Math.round(miles * 5280)} ft`;
+            return `${miles.toFixed(2)} mi`;
+        }
+
         function renderTable(data, isPartial = false) {
             const head = document.getElementById('tableHead');
             const body = document.getElementById('tableBody');
@@ -1060,8 +1073,11 @@
                 ? `${data.length} records found. Part of the search timed out, so some markers may be missing; search again for a complete list.`
                 : `${data.length} records found`;
 
-            // Extract the 'attributes' child object from each item for the table rows
+            // Extract the 'attributes' child object from each item for the table rows.
+            // Rows arrive sorted closest first; their distance is kept alongside.
             const tableRows = data.map(item => item.attributes);
+            const distances = data.map(item => item.distance_miles);
+            const showDistance = distances.some(d => d !== null && d !== undefined);
 
             // Fields to filter out as they are always null
             const fieldsToIgnore = ['reverse overlap feature', 'continuity code', 'route sequence number'];
@@ -1070,6 +1086,12 @@
             const allCols = Object.keys(tableRows[0]);
             const cols = allCols.filter(col => !fieldsToIgnore.includes(col));
             
+            if (showDistance) {
+                const th = document.createElement('th');
+                th.innerText = 'Distance';
+                th.title = 'Ground distance from the search location';
+                head.appendChild(th);
+            }
             cols.forEach(col => {
                 const th = document.createElement('th');
                 th.innerText = col;
@@ -1082,7 +1104,7 @@
             head.appendChild(actionTh);
 
             // Rows
-            tableRows.forEach(row => {
+            tableRows.forEach((row, rowIndex) => {
                 const tr = document.createElement('tr');
                 tr.id = `row-${row.OBJECTID}`;
                 
@@ -1097,6 +1119,12 @@
                     }
                 };
                 
+                if (showDistance) {
+                    const td = document.createElement('td');
+                    td.className = 'distance-cell';
+                    td.innerText = formatDistance(distances[rowIndex]);
+                    tr.appendChild(td);
+                }
                 cols.forEach(col => {
                     const td = document.createElement('td');
                     td.innerText = row[col] !== null ? row[col] : 'Null';

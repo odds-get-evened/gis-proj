@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 
+from geodesy import Geodesy, wkid_of
 from utm_projection import UTM_ZONE_18N
 
 logger = logging.getLogger(__name__)
@@ -287,8 +288,10 @@ class ReferenceMarkerService(ArcGISClient):
         projected coordinate system (UTM 18N, meters), so the search area is a true
         circle whatever spatial reference the input point uses (lat/lon, UTM or Web Mercator).
 
-        Each marker is {"attributes": {...}, "geometry": {..., "spatialReference": {...}}},
-        with attributes keyed by their display names (e.g. "Reference Marker Number").
+        Each marker is {"attributes": {...}, "geometry": {..., "spatialReference": {...}},
+        "distance_miles": ...}, with attributes keyed by their display names (e.g.
+        "Reference Marker Number"). Markers are sorted closest first; distance_miles is
+        the ground distance from point (None if it can't be worked out, sorted last).
 
         If some sub-layers fail, the markers from the others are returned with
         is_partial=True. If every sub-layer fails, the first failure is raised,
@@ -306,7 +309,22 @@ class ReferenceMarkerService(ArcGISClient):
             "outSR": out_sr,
         }
         markers, is_partial = self._query_all_layers(params)
-        return NearbyMarkers(markers=markers, is_partial=is_partial)
+        return NearbyMarkers(markers=self._sorted_by_distance(markers, point, sr), is_partial=is_partial)
+
+    @staticmethod
+    def _sorted_by_distance(markers: List[Dict], point: Dict, sr: int) -> List[Dict]:
+        """Adds distance_miles from point to each marker and sorts closest first."""
+        center = Geodesy.point_to_lat_lon(point, sr)
+        measured = []
+        for marker in markers:
+            distance = None
+            geometry = marker.get("geometry")
+            if center and geometry:
+                position = Geodesy.point_to_lat_lon(geometry, wkid_of(geometry.get("spatialReference")))
+                if position:
+                    distance = round(Geodesy.distance_miles(center, position), 4)
+            measured.append({**marker, "distance_miles": distance})
+        return sorted(measured, key=lambda m: (m["distance_miles"] is None, m["distance_miles"] or 0))
 
     MAX_NUMBER_MATCHES = 10
 
