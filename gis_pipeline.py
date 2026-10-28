@@ -72,6 +72,9 @@ class ArcGISClient:
     def __init__(self):
         # One session per service reuses connections across requests
         self._session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=50, pool_maxsize=50)
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
 
     def _make_request(self, url: str, params: Dict) -> Dict:
         params = {**params, "f": "json"}

@@ -2,7 +2,7 @@ import requests
 import json
 
 # Endpoints
-GEOCODER_URL = "https://gisservices.its.ny.gov/arcgis/rest/services/Locators/Street_and_Address_Composite/GeocodeServer/findAddressCandidates"
+GEOCODER_URL = "https://nysgeohub.ny.gov/arcgis/rest/services/Geocoder/NYS_Geocoder/GeocodeServer/findAddressCandidates"
 MAPSERVER_URL = "https://gis.dot.ny.gov/hostingny/rest/services/Ref_Marker/MapServer"
 IDENTIFY_URL = f"{MAPSERVER_URL}/identify"
 
